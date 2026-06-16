@@ -1,5 +1,6 @@
 package com.domriquez.spendwise.expense;
 
+import com.domriquez.spendwise.audit.AuditableEvent;
 import com.domriquez.spendwise.event.ExpenseCreatedEvent;
 import com.domriquez.spendwise.exception.ExpenseNotFoundException;
 import com.domriquez.spendwise.expense.dto.CategorySummary;
@@ -47,14 +48,18 @@ class ExpenseServiceImplTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private ExpenseSummaryCache summaryCache;
+
     private ExpenseService service;
 
     @BeforeEach
     void setUp() {
         // Real mapper, mocked collaborators: we exercise the actual mapping logic while
-        // controlling persistence and the "who is logged in" decision.
+        // controlling persistence, the "who is logged in" decision, and the summary cache.
         service = new ExpenseServiceImpl(
-                repository, new ExpenseMapper(), userRepository, currentUserProvider, eventPublisher);
+                repository, new ExpenseMapper(), userRepository, currentUserProvider,
+                eventPublisher, summaryCache);
         when(currentUserProvider.requireCurrentUsername()).thenReturn(USERNAME);
     }
 
@@ -77,8 +82,11 @@ class ExpenseServiceImplTest {
         assertThat(response.amount()).isEqualByComparingTo("120.50");
         assertThat(response.category()).isEqualTo(Category.FOOD);
         verify(repository).save(any(Expense.class));
-        // Creating an expense raises a domain event (relayed to Kafka after commit).
+        // Creating an expense raises a domain event (relayed to Kafka after commit)...
         verify(eventPublisher).publishEvent(any(ExpenseCreatedEvent.class));
+        // ...and an audit event, and invalidates the owner's cached summary.
+        verify(eventPublisher).publishEvent(any(AuditableEvent.class));
+        verify(summaryCache).evict(USERNAME);
     }
 
     @Test
@@ -118,16 +126,17 @@ class ExpenseServiceImplTest {
     }
 
     @Test
-    void summary_aggregatesGrandTotalForCurrentUser() {
-        List<CategorySummary> categoryTotals = List.of(
-                new CategorySummary(Category.FOOD, new BigDecimal("100.00")),
-                new CategorySummary(Category.TRANSPORT, new BigDecimal("55.50"))
-        );
-        when(repository.summarizeByCategory(eq(USERNAME), any(), any())).thenReturn(categoryTotals);
+    void summary_delegatesToCacheForCurrentUser() {
+        // The aggregation itself is covered by ExpenseSummaryCacheTest; here we only assert that
+        // the service delegates to the cache for the current user and returns its result.
+        SummaryResponse expected = new SummaryResponse(
+                List.of(new CategorySummary(Category.FOOD, new BigDecimal("155.50"))),
+                new BigDecimal("155.50"));
+        when(summaryCache.summarize(eq(USERNAME), any(), any())).thenReturn(expected);
 
         SummaryResponse summary = service.summary(null, null);
 
-        assertThat(summary.categories()).hasSize(2);
-        assertThat(summary.grandTotal()).isEqualByComparingTo("155.50");
+        assertThat(summary).isSameAs(expected);
+        verify(summaryCache).summarize(USERNAME, null, null);
     }
 }

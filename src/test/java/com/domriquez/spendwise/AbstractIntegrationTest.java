@@ -10,7 +10,9 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.mongodb.MongoDBContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -38,13 +40,27 @@ public abstract class AbstractIntegrationTest {
     static final KafkaContainer KAFKA =
             new KafkaContainer(DockerImageName.parse("apache/kafka:4.0.0"));
 
+    // Document store for the audit log.
+    static final MongoDBContainer MONGO =
+            new MongoDBContainer(DockerImageName.parse("mongo:7.0"));
+
+    // Cache backing store. Redis has no dedicated Testcontainers module, so a core
+    // GenericContainer running the official redis image is the idiomatic approach.
+    static final GenericContainer<?> REDIS =
+            new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+
     static {
         KAFKA.start();
+        MONGO.start();
+        REDIS.start();
     }
 
     @DynamicPropertySource
-    static void kafkaProperties(DynamicPropertyRegistry registry) {
+    static void containerProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        registry.add("spring.data.mongodb.uri", () -> MONGO.getConnectionString() + "/spendwise");
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getFirstMappedPort());
     }
 
     @Autowired
