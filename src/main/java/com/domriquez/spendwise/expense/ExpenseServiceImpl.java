@@ -1,5 +1,6 @@
 package com.domriquez.spendwise.expense;
 
+import com.domriquez.spendwise.event.ExpenseCreatedEvent;
 import com.domriquez.spendwise.exception.ExpenseNotFoundException;
 import com.domriquez.spendwise.expense.dto.CategorySummary;
 import com.domriquez.spendwise.expense.dto.ExpenseRequest;
@@ -8,6 +9,7 @@ import com.domriquez.spendwise.expense.dto.SummaryResponse;
 import com.domriquez.spendwise.security.CurrentUserProvider;
 import com.domriquez.spendwise.user.User;
 import com.domriquez.spendwise.user.UserRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -31,15 +33,18 @@ public class ExpenseServiceImpl implements ExpenseService {
     private final ExpenseMapper mapper;
     private final UserRepository userRepository;
     private final CurrentUserProvider currentUserProvider;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ExpenseServiceImpl(ExpenseRepository repository,
                               ExpenseMapper mapper,
                               UserRepository userRepository,
-                              CurrentUserProvider currentUserProvider) {
+                              CurrentUserProvider currentUserProvider,
+                              ApplicationEventPublisher eventPublisher) {
         this.repository = repository;
         this.mapper = mapper;
         this.userRepository = userRepository;
         this.currentUserProvider = currentUserProvider;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -47,7 +52,16 @@ public class ExpenseServiceImpl implements ExpenseService {
     public ExpenseResponse create(ExpenseRequest request) {
         Expense expense = mapper.toEntity(request);
         expense.setOwner(currentUser());
-        return mapper.toResponse(repository.save(expense));
+        Expense saved = repository.save(expense);
+        // Published within the transaction but dispatched to Kafka only after commit
+        // (see ExpenseEventPublisher), so consumers never see uncommitted data.
+        eventPublisher.publishEvent(new ExpenseCreatedEvent(
+                saved.getId(),
+                saved.getOwner().getUsername(),
+                saved.getCategory(),
+                saved.getAmount(),
+                saved.getDate()));
+        return mapper.toResponse(saved);
     }
 
     @Override
