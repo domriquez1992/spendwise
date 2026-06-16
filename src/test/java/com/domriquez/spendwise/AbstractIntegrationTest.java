@@ -3,6 +3,7 @@ package com.domriquez.spendwise;
 import com.jayway.jsonpath.JsonPath;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -20,16 +21,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Base class for full-stack integration tests. Boots the entire application against an in-memory
- * H2 database and a real, throwaway Kafka broker started with Testcontainers.
+ * H2 database plus three real, throwaway services started with Testcontainers: Kafka, MongoDB, and
+ * Redis. All three are static singletons started once and shared by every subclass (the classic
+ * Testcontainers "singleton container" pattern); the runtime reaps them when the JVM exits.
  *
- * <p>The broker is a single static instance started once and shared by every subclass (the
- * classic Testcontainers "singleton container" pattern). It is never explicitly stopped — the
- * Testcontainers runtime reaps it when the JVM exits — and because all subclasses share the same
- * Spring test configuration, the application context is cached and reused across them.
+ * <p>MongoDB and Redis are wired with Spring Boot's {@code @ServiceConnection}: Boot reads each
+ * started container's real, host-reachable address and registers a {@code ConnectionDetails} bean
+ * that takes priority over any {@code spring.data.*} property. This is more robust than overriding
+ * connection properties by hand, which is sensitive to how the container's address is resolved.
+ * Kafka keeps a {@code @DynamicPropertySource} override, which only needs the bootstrap-servers
+ * string.
  *
- * <p>Consequently the database is shared across all integration tests, so each test uses distinct
- * usernames to stay independent without per-test rollback. (Rollback would also suppress the
- * {@code AFTER_COMMIT} event that drives the Kafka flow, so committing for real is intentional.)
+ * <p>The database is shared across all integration tests, so each test uses distinct usernames to
+ * stay independent without per-test rollback. (Rollback would also suppress the {@code AFTER_COMMIT}
+ * events that drive the Kafka and audit flows, so committing for real is intentional.)
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -41,11 +46,13 @@ public abstract class AbstractIntegrationTest {
             new KafkaContainer(DockerImageName.parse("apache/kafka:4.0.0"));
 
     // Document store for the audit log.
+    @ServiceConnection
     static final MongoDBContainer MONGO =
             new MongoDBContainer(DockerImageName.parse("mongo:7.0"));
 
-    // Cache backing store. Redis has no dedicated Testcontainers module, so a core
-    // GenericContainer running the official redis image is the idiomatic approach.
+    // Cache backing store. Redis has no dedicated Testcontainers module, so a core GenericContainer
+    // runs the official image; the name hint tells @ServiceConnection it is a Redis service.
+    @ServiceConnection(name = "redis")
     static final GenericContainer<?> REDIS =
             new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
 
@@ -56,11 +63,8 @@ public abstract class AbstractIntegrationTest {
     }
 
     @DynamicPropertySource
-    static void containerProperties(DynamicPropertyRegistry registry) {
+    static void kafkaProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
-        registry.add("spring.data.mongodb.uri", () -> "mongodb://" + MONGO.getHost() + ":" + MONGO.getMappedPort(27017) + "/spendwise?directConnection=true");
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getFirstMappedPort());
     }
 
     @Autowired
