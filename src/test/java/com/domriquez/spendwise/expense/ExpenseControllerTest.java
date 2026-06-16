@@ -4,7 +4,7 @@ import com.domriquez.spendwise.exception.ExpenseNotFoundException;
 import com.domriquez.spendwise.expense.dto.ExpenseResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -71,8 +71,8 @@ class ExpenseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.description").exists())
-                .andExpect(jsonPath("$.errors.amount").exists());
+                .andExpect(jsonPath("$.title").value("Validation Failed"))
+                .andExpect(jsonPath("$.detail").value("One or more fields are invalid"));
     }
 
     @Test
