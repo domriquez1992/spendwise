@@ -37,10 +37,10 @@ public class AuthService {
         if (userRepository.existsByUsername(request.username())) {
             throw new UsernameAlreadyExistsException(request.username());
         }
-        User user = new User();
-        user.setUsername(request.username());
-        user.setPassword(passwordEncoder.encode(request.password()));
-        user.setRole(Role.USER);
+        User user = new User(
+                request.username(),
+                passwordEncoder.encode(request.password()),
+                Role.USER);
         userRepository.save(user);
     }
 
