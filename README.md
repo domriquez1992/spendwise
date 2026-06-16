@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/domriquez1992/spendwise/actions/workflows/ci.yml/badge.svg)
 
-A small but production-shaped REST API for tracking personal expenses, built with **Java 21** and **Spring Boot 4**. It demonstrates a clean layered architecture, **stateless JWT authentication** (Spring Security), **per-user data ownership** and **role-based authorization**, input validation, consistent error handling, an aggregation endpoint, automated tests (including full security and data-isolation integration tests), containerization, and a CI pipeline.
+A small but production-shaped REST API for tracking personal expenses, built with **Java 21** and **Spring Boot 4**. It demonstrates a clean layered architecture, **stateless JWT authentication** (Spring Security), **per-user data ownership** and **role-based authorization**, **event-driven processing with Apache Kafka** (creating an expense asynchronously raises budget notifications), input validation, consistent error handling, an aggregation endpoint, automated tests (including full security, data-isolation, and end-to-end Kafka integration tests), containerization, and a CI pipeline.
 
 ---
 
@@ -13,9 +13,10 @@ A small but production-shaped REST API for tracking personal expenses, built wit
 | Language | Java 21 (LTS) |
 | Framework | Spring Boot 4.0.x (Spring Web, Spring Data JPA, Bean Validation) |
 | Security | Spring Security 7, JWT (jjwt 0.12), BCrypt password hashing |
+| Messaging | Apache Kafka (Spring for Apache Kafka 4, KRaft) |
 | Database | PostgreSQL 17 (H2 in-memory for tests) |
 | Build | Maven |
-| Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ |
+| Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka), Awaitility |
 | Container | Docker (multi-stage build), Docker Compose |
 | CI | GitHub Actions |
 
@@ -54,6 +55,34 @@ HTTP  ─▶  JwtAuthenticationFilter   (reads "Authorization: Bearer <token>", 
 
 The `auth`, `security`, and `user` packages hold authentication and authorization; the `admin` package holds admin-only endpoints. Two authorization layers work together: the **filter chain** decides *whether you are authenticated*, and **method security** (`@PreAuthorize`) decides *whether your role permits a given operation*. Within the expense layer, every query is **scoped to the current user** — the service resolves the caller via a small `CurrentUserProvider` and only ever reads or writes rows the caller owns, so one user can never see another's data.
 
+### Event-driven processing (Kafka)
+
+Creating an expense does more than write a row: it emits an event that is processed **asynchronously**, so the write path stays fast and the reaction (checking budgets, raising notifications) is decoupled from it.
+
+```
+POST /expenses ─▶ ExpenseService.create()
+                    │  saves the expense, then publishes a Spring event
+                    ▼
+                  ExpenseEventPublisher          (@TransactionalEventListener, AFTER_COMMIT)
+                    │  relays to Kafka only once the DB transaction has committed
+                    ▼
+                  Kafka topic  "expense.created"  (JSON value, keyed by username)
+                    │
+                    ▼
+                  ExpenseEventListener           (@KafkaListener)
+                    │  sums the user's spend in that category for the month;
+                    │  if it exceeds the budget limit…
+                    ▼
+                  Notification  ─▶  GET /api/v1/notifications
+```
+
+Two details make this correct rather than just wired up:
+
+- **Publish after commit, not during.** The service publishes an in-process Spring application event; a listener bound to `AFTER_COMMIT` is what actually sends to Kafka. If the transaction rolls back, no message is ever sent — this sidesteps the dual-write hazard where a consumer reacts to data that was never persisted (or that it cannot yet read).
+- **Keyed by username.** Each user's events share a partition key, so a single user's events preserve their order.
+
+The producer/consumer are split across an `event` package (the event and the Kafka relay) and a `notification` package (the consumer, the `Notification` entity, and its read endpoint). The notification references its owner by username — the data already on the event — keeping that module independent of the user/expense aggregates.
+
 ---
 
 ## Getting started
@@ -64,7 +93,7 @@ The `auth`, `security`, and `user` packages hold authentication and authorizatio
 docker compose up --build
 ```
 
-This starts PostgreSQL and the API together. The API is available at `http://localhost:8080`.
+This starts PostgreSQL, a single-node Kafka broker (KRaft mode, no ZooKeeper), and the API together. The API is available at `http://localhost:8080`.
 
 ### Option B — Run locally
 
@@ -91,6 +120,8 @@ All datasource settings are externalized (12-factor style) and read from environ
 | `SPRING_DATASOURCE_PASSWORD` | `spendwise` |
 | `JWT_SECRET` | dev-only default (**override in production**) |
 | `JWT_EXPIRATION_MS` | `3600000` (1 hour) |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `APP_BUDGET_MONTHLY_CATEGORY_LIMIT` | `1000` |
 
 > **Security note:** `JWT_SECRET` ships with a development default so the app runs out of the box. In any real deployment it **must** be overridden with a strong, secret value of at least 32 bytes — anyone who knows the signing secret can mint valid tokens.
 
@@ -229,6 +260,31 @@ New accounts always register as `USER`. The first `ADMIN` is provisioned out of 
 
 ---
 
+### Notifications
+
+Base path: `/api/v1/notifications` — **requires a `Bearer` token**; returns only the caller's own notifications. Notifications are generated automatically by the Kafka consumer when a user's spending in a category for the month exceeds `APP_BUDGET_MONTHLY_CATEGORY_LIMIT`.
+
+| Method | Path | Description | Success |
+|--------|------|-------------|---------|
+| `GET` | `/api/v1/notifications` | List the current user's budget notifications (newest first) | `200 OK` |
+
+```bash
+curl http://localhost:8080/api/v1/notifications \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+```json
+[
+  {
+    "id": 1,
+    "message": "You have spent 1120.50 on FOOD so far this month, over your budget of 1000.",
+    "createdAt": "2026-06-16T10:15:31Z"
+  }
+]
+```
+
+---
+
 ## Testing
 
 ```bash
@@ -238,8 +294,9 @@ mvn test
 - **Service unit tests** (`ExpenseServiceImplTest`) — pure JUnit 5 + Mockito, no Spring context or database. The current user is supplied through a mocked `CurrentUserProvider`, so the owner-scoping logic is exercised without a security context. Covers creation (owner assignment), owner-scoped retrieval, the not-found/not-owned path, delete guarding, and summary aggregation.
 - **Web layer tests** (`ExpenseControllerTest`) — `@WebMvcTest` slice with `MockMvc`, verifying status codes, validation responses, and error mapping. Security filters are disabled in this slice so it stays focused on the controller.
 - **Security & isolation integration test** (`AuthIntegrationTest`) — a full `@SpringBootTest` against an in-memory **H2** database that drives the real filter chain, JWT issuance/verification, and BCrypt. It registers, logs in, and proves the protected endpoint returns `401` without a token and `200` with a valid one (plus wrong-password and duplicate-username cases). It also proves **data isolation** — one user gets `404` trying to read or delete another user's expense — and **role enforcement** — a `USER` gets `403` on the admin endpoint while an `ADMIN` gets `200`.
+- **Event-driven integration test** (`KafkaNotificationIntegrationTest`) — a full `@SpringBootTest` that exercises the Kafka pipeline end to end against a **real broker started with Testcontainers** (`apache/kafka`, version-matched to the client). It creates an over-budget expense through the API, then polls (with Awaitility) until the asynchronously-produced notification has been consumed and persisted, and finally reads it back through `GET /api/v1/notifications`. Both integration tests share a single Spring context and one reused broker via a common `AbstractIntegrationTest` base class.
 
-The unit and slice tests run without any database; the integration test uses H2, so CI still needs no external services.
+The unit and slice tests run without any database or broker. The integration tests use H2 plus a throwaway Kafka container, so the only external requirement in CI is a Docker daemon — which the GitHub Actions runners provide out of the box.
 
 ---
 
@@ -263,6 +320,9 @@ A few choices worth calling out:
 - **`404`, not `403`, for another user's data.** Asking for an expense you don't own returns `404 Not Found`, identical to a non-existent id. Returning `403` would confirm the row exists; `404` reveals nothing about other users' data.
 - **A `CurrentUserProvider` instead of static security calls in services.** The service layer depends on a tiny injectable component to learn who is logged in, rather than reaching for Spring Security's static `SecurityContextHolder`. This keeps business logic free of framework plumbing and trivially unit-testable with a mock.
 - **Method security for roles (`@PreAuthorize`).** Role checks live as annotations on the admin endpoints (`hasRole('ADMIN')`), enforced by a Spring AOP interceptor before the method runs — co-located with the code they protect and independent of URL-pattern configuration. A denied call surfaces as a `403` `ProblemDetail` via a dedicated exception handler.
+- **Publish to Kafka after commit, via a Spring event.** The expense service raises an in-process application event; a `@TransactionalEventListener(AFTER_COMMIT)` is what relays it to Kafka. This guarantees a message is only sent once the originating transaction has committed, so consumers never react to rolled-back or not-yet-visible data — the lightweight alternative to a full transactional-outbox for a single service. (It also means the integration tests commit for real rather than rolling back, so the event actually fires.)
+- **Jackson-3 Kafka serializers.** Spring Boot 4 / Spring for Apache Kafka 4 ship Jackson 3, so events use `JacksonJsonSerializer` / `JacksonJsonDeserializer` with the consumer pinned to the event type and a trusted-packages allow-list, rather than the now-deprecated Jackson-2 serializers.
+- **A real broker in tests, not a mock.** The Kafka flow is verified against an actual broker via Testcontainers (pinned to the same Kafka version as the client) rather than mocking `KafkaTemplate` — the test proves the message genuinely round-trips through Kafka and is consumed, which a mock could not.
 
 ---
 
@@ -272,7 +332,7 @@ This is the foundation of a larger portfolio. Natural next steps:
 
 - ~~JWT authentication~~ ✅ done — see the Authentication section above
 - ~~Per-user data ownership and role-based authorization (`USER` / `ADMIN`)~~ ✅ done — see the Admin section and design decisions
+- ~~Event-driven processing with Apache Kafka~~ ✅ done — see the Event-driven processing section and the Notifications endpoint
 - Interactive API docs with OpenAPI / Swagger UI
 - Versioned schema migrations (Flyway)
-- Event-driven processing with Apache Kafka
 - Containerized deployment to a cloud provider
