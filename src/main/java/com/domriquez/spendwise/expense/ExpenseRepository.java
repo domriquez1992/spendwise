@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -43,4 +44,21 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     List<CategorySummary> summarizeByCategory(@Param("username") String username,
                                               @Param("from") LocalDate from,
                                               @Param("to") LocalDate to);
+
+    /**
+     * Total a single user has spent in one category over a half-open date range
+     * {@code [from, to)}. Returns zero (never {@code null}) when there are no matching rows.
+     */
+    @Query("""
+            SELECT COALESCE(SUM(e.amount), 0)
+            FROM Expense e
+            WHERE e.owner.username = :username
+              AND e.category = :category
+              AND e.date >= :from
+              AND e.date < :to
+            """)
+    BigDecimal sumByOwnerAndCategoryInPeriod(@Param("username") String username,
+                                             @Param("category") Category category,
+                                             @Param("from") LocalDate from,
+                                             @Param("to") LocalDate to);
 }
