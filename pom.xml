@@ -40,7 +40,38 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Apache Kafka support: KafkaTemplate (producer) and @KafkaListener (consumer). -->
+        <!--
+            MongoDB stores the append-only audit log as documents. A document store suits an
+            ever-growing, write-heavy, loosely-structured event stream better than a relational
+            table, while the transactional expense data stays in PostgreSQL (polyglot persistence).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
+        </dependency>
+
+        <!--
+            Redis + Spring Cache: caches the per-user spending summary so the GROUP BY aggregation
+            is not recomputed on every read. Boot 4 ships cache auto-configuration in its own
+            module, so spring-boot-starter-cache is required alongside the Redis starter for a
+            RedisCacheManager to be auto-configured.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+
+        <!--
+            Apache Kafka support: KafkaTemplate (producer) and @KafkaListener (consumer).
+            Boot 4 split Kafka auto-configuration into a separate module, so we depend on
+            spring-boot-starter-kafka (which pulls in spring-kafka transitively) rather than
+            spring-kafka directly. Without the starter, KafkaAutoConfiguration never runs and
+            no KafkaTemplate bean is created.
+        -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-kafka</artifactId>
@@ -110,6 +141,17 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            MongoDB Testcontainer for the audit-log integration test. (Redis uses a core
+            GenericContainer with a redis image, so it needs no dedicated module.) Testcontainers 2.x
+            renamed the module artifact with a testcontainers- prefix and moved MongoDBContainer to
+            the org.testcontainers.mongodb package. Version managed by the Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-mongodb</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- Awaitility: poll for the asynchronously-produced notification without flaky sleeps. -->
