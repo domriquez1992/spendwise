@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: spendwise
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/spendwise}
+    username: ${SPRING_DATASOURCE_USERNAME:spendwise}
+    password: ${SPRING_DATASOURCE_PASSWORD:spendwise}
+  jpa:
+    hibernate:
+      # Pragmatic for a portfolio/demo. A production service would manage the
+      # schema with versioned migrations (Flyway or Liquibase) instead.
+      ddl-auto: update
+    # Disable the Open Session In View anti-pattern: keep the persistence
+    # context confined to the service/transaction layer.
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+server:
+  port: 8080
