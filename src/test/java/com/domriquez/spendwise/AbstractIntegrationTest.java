@@ -58,7 +58,7 @@ public abstract class AbstractIntegrationTest {
     @DynamicPropertySource
     static void containerProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
-        registry.add("spring.data.mongodb.uri", () -> MONGO.getConnectionString() + "/spendwise");
+        registry.add("spring.data.mongodb.uri", () -> "mongodb://" + MONGO.getHost() + ":" + MONGO.getMappedPort(27017) + "/spendwise?directConnection=true");
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getFirstMappedPort());
     }
