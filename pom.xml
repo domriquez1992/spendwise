@@ -40,6 +40,12 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- Apache Kafka support: KafkaTemplate (producer) and @KafkaListener (consumer). -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!--
             JSON Web Token support (jjwt). Split into api/impl/serializer modules as the library
             recommends. The Gson serializer is used deliberately instead of jjwt-jackson so that
@@ -82,6 +88,34 @@
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            Testcontainers spins up a real, throwaway Kafka broker in Docker for the
+            event-driven integration test, so the produce -> consume flow is verified
+            end to end against an actual broker rather than a mock. Versions are managed
+            by the Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Awaitility: poll for the asynchronously-produced notification without flaky sleeps. -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
