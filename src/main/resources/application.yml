@@ -20,3 +20,12 @@ spring:
 
 server:
   port: 8080
+
+app:
+  jwt:
+    # Dev-only default. MUST be overridden in production via the JWT_SECRET environment
+    # variable. HMAC-SHA-256 needs a key of at least 256 bits (32 bytes); this string is well
+    # above that length when read as UTF-8 bytes.
+    secret: ${JWT_SECRET:dev-secret-change-me-spendwise-please-override-in-production-0123456789}
+    # Access-token lifetime in milliseconds (default: 1 hour).
+    expiration-ms: ${JWT_EXPIRATION_MS:3600000}
