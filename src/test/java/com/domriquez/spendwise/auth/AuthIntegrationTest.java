@@ -1,17 +1,14 @@
 package com.domriquez.spendwise.auth;
 
+import com.domriquez.spendwise.AbstractIntegrationTest;
 import com.domriquez.spendwise.user.Role;
 import com.domriquez.spendwise.user.User;
 import com.domriquez.spendwise.user.UserRepository;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -25,16 +22,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * real JWT issuance and verification, BCrypt hashing, per-user data isolation, and role-based
  * method security. Nothing here is mocked.
  *
- * <p>Each test uses distinct usernames because the test database is shared across methods
- * (no per-test rollback), which keeps the tests independent without extra transaction plumbing.
+ * <p>Shared setup (the application context, MockMvc, and the register/login/createExpense
+ * helpers) lives in {@link AbstractIntegrationTest}. Each test uses distinct usernames because
+ * the test database is shared across methods.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-class AuthIntegrationTest {
-
-    @Autowired
-    private MockMvc mockMvc;
+class AuthIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private UserRepository userRepository;
@@ -127,42 +119,5 @@ class AuthIntegrationTest {
         mockMvc.perform(get("/api/v1/admin/users")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
-    }
-
-    // --- helpers ---
-
-    private void register(String username, String password) throws Exception {
-        mockMvc.perform(post("/api/v1/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(username, password)))
-                .andExpect(status().isCreated());
-    }
-
-    private String login(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(username, password)))
-                .andExpect(status().isOk())
-                .andReturn();
-        return JsonPath.read(result.getResponse().getContentAsString(), "$.token");
-    }
-
-    private int createExpense(String token) throws Exception {
-        String body = """
-                {"description": "Lunch", "amount": 120.50, "category": "FOOD", "date": "2026-06-16"}
-                """;
-        MvcResult result = mockMvc.perform(post("/api/v1/expenses")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
-    }
-
-    private static String credentials(String username, String password) {
-        return """
-                {"username": "%s", "password": "%s"}
-                """.formatted(username, password);
     }
 }

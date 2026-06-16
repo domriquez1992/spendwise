@@ -1,5 +1,6 @@
 package com.domriquez.spendwise.expense;
 
+import com.domriquez.spendwise.event.ExpenseCreatedEvent;
 import com.domriquez.spendwise.exception.ExpenseNotFoundException;
 import com.domriquez.spendwise.expense.dto.CategorySummary;
 import com.domriquez.spendwise.expense.dto.ExpenseRequest;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -42,13 +44,17 @@ class ExpenseServiceImplTest {
     @Mock
     private CurrentUserProvider currentUserProvider;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private ExpenseService service;
 
     @BeforeEach
     void setUp() {
         // Real mapper, mocked collaborators: we exercise the actual mapping logic while
         // controlling persistence and the "who is logged in" decision.
-        service = new ExpenseServiceImpl(repository, new ExpenseMapper(), userRepository, currentUserProvider);
+        service = new ExpenseServiceImpl(
+                repository, new ExpenseMapper(), userRepository, currentUserProvider, eventPublisher);
         when(currentUserProvider.requireCurrentUsername()).thenReturn(USERNAME);
     }
 
@@ -71,6 +77,8 @@ class ExpenseServiceImplTest {
         assertThat(response.amount()).isEqualByComparingTo("120.50");
         assertThat(response.category()).isEqualTo(Category.FOOD);
         verify(repository).save(any(Expense.class));
+        // Creating an expense raises a domain event (relayed to Kafka after commit).
+        verify(eventPublisher).publishEvent(any(ExpenseCreatedEvent.class));
     }
 
     @Test
