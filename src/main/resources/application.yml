@@ -17,6 +17,23 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  kafka:
+    # In production, point this at your broker(s) via KAFKA_BOOTSTRAP_SERVERS. The integration
+    # test overrides it with a Testcontainers broker.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Jackson 3 JSON serializer (Spring Kafka 4 / Spring Boot 4).
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+    consumer:
+      group-id: spendwise-notifications
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+      properties:
+        # Deserialize event payloads to this type, and only trust this package.
+        spring.json.value.default.type: com.domriquez.spendwise.event.ExpenseCreatedEvent
+        spring.json.trusted.packages: com.domriquez.spendwise.event
 
 server:
   port: 8080
@@ -29,3 +46,7 @@ app:
     secret: ${JWT_SECRET:dev-secret-change-me-spendwise-please-override-in-production-0123456789}
     # Access-token lifetime in milliseconds (default: 1 hour).
     expiration-ms: ${JWT_EXPIRATION_MS:3600000}
+  budget:
+    # When a user's spending in a category for the month exceeds this amount, a budget
+    # notification is generated. Override per environment via APP_BUDGET_MONTHLY_CATEGORY_LIMIT.
+    monthly-category-limit: ${APP_BUDGET_MONTHLY_CATEGORY_LIMIT:1000}

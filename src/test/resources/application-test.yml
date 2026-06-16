@@ -9,3 +9,9 @@ spring:
       ddl-auto: create-drop
     open-in-view: false
     show-sql: false
+
+# Low limit so a single test expense crosses the budget threshold. The Kafka bootstrap server
+# is injected at runtime by the Testcontainers broker (see AbstractIntegrationTest).
+app:
+  budget:
+    monthly-category-limit: 100
