@@ -34,6 +34,22 @@ spring:
         # Deserialize event payloads to this type, and only trust this package.
         spring.json.value.default.type: com.domriquez.spendwise.event.ExpenseCreatedEvent
         spring.json.trusted.packages: com.domriquez.spendwise.event
+  data:
+    mongodb:
+      # Audit-log document store. In production point at your cluster via SPRING_DATA_MONGODB_URI;
+      # the integration test overrides this with a Testcontainers MongoDB instance.
+      uri: ${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/spendwise}
+      auto-index-creation: true
+    redis:
+      # Cache backing store. Overridden by the Testcontainers Redis instance in integration tests.
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+  cache:
+    type: redis
+    redis:
+      # Summary entries expire after 10 minutes as a safety net even if an eviction is missed.
+      time-to-live: 10m
+      cache-null-values: false
 
 server:
   port: 8080

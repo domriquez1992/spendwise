@@ -1,8 +1,9 @@
 package com.domriquez.spendwise.expense;
 
+import com.domriquez.spendwise.audit.AuditEventType;
+import com.domriquez.spendwise.audit.AuditableEvent;
 import com.domriquez.spendwise.event.ExpenseCreatedEvent;
 import com.domriquez.spendwise.exception.ExpenseNotFoundException;
-import com.domriquez.spendwise.expense.dto.CategorySummary;
 import com.domriquez.spendwise.expense.dto.ExpenseRequest;
 import com.domriquez.spendwise.expense.dto.ExpenseResponse;
 import com.domriquez.spendwise.expense.dto.SummaryResponse;
@@ -15,9 +16,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.List;
 
 /**
  * Expense operations, scoped to the authenticated user. Every read and write is constrained to
@@ -25,6 +24,11 @@ import java.util.List;
  *
  * <p>The current username is resolved through {@link CurrentUserProvider}, which keeps this class
  * free of direct calls to Spring Security's static context holder and easy to unit test.
+ *
+ * <p>Each write does two cross-cutting things after persisting: it publishes an
+ * {@link AuditableEvent} (recorded to the MongoDB audit log after commit) and evicts the user's
+ * cached spending summary so the next read recomputes from current data. Reading the summary is
+ * delegated to {@link ExpenseSummaryCache} so Spring's cache proxy can intercept it.
  */
 @Service
 public class ExpenseServiceImpl implements ExpenseService {
@@ -34,17 +38,20 @@ public class ExpenseServiceImpl implements ExpenseService {
     private final UserRepository userRepository;
     private final CurrentUserProvider currentUserProvider;
     private final ApplicationEventPublisher eventPublisher;
+    private final ExpenseSummaryCache summaryCache;
 
     public ExpenseServiceImpl(ExpenseRepository repository,
                               ExpenseMapper mapper,
                               UserRepository userRepository,
                               CurrentUserProvider currentUserProvider,
-                              ApplicationEventPublisher eventPublisher) {
+                              ApplicationEventPublisher eventPublisher,
+                              ExpenseSummaryCache summaryCache) {
         this.repository = repository;
         this.mapper = mapper;
         this.userRepository = userRepository;
         this.currentUserProvider = currentUserProvider;
         this.eventPublisher = eventPublisher;
+        this.summaryCache = summaryCache;
     }
 
     @Override
@@ -53,14 +60,17 @@ public class ExpenseServiceImpl implements ExpenseService {
         Expense expense = mapper.toEntity(request);
         expense.setOwner(currentUser());
         Expense saved = repository.save(expense);
+        String username = saved.getOwner().getUsername();
         // Published within the transaction but dispatched to Kafka only after commit
         // (see ExpenseEventPublisher), so consumers never see uncommitted data.
         eventPublisher.publishEvent(new ExpenseCreatedEvent(
                 saved.getId(),
-                saved.getOwner().getUsername(),
+                username,
                 saved.getCategory(),
                 saved.getAmount(),
                 saved.getDate()));
+        auditAndEvict(AuditEventType.EXPENSE_CREATED, username, saved.getId(),
+                "Created expense '" + saved.getDescription() + "'");
         return mapper.toResponse(saved);
     }
 
@@ -81,28 +91,41 @@ public class ExpenseServiceImpl implements ExpenseService {
     @Override
     @Transactional
     public ExpenseResponse update(Long id, ExpenseRequest request) {
-        Expense expense = repository.findByIdAndOwnerUsername(id, currentUsername())
+        String username = currentUsername();
+        Expense expense = repository.findByIdAndOwnerUsername(id, username)
                 .orElseThrow(() -> new ExpenseNotFoundException(id));
         mapper.applyUpdate(expense, request);
-        return mapper.toResponse(repository.save(expense));
+        Expense saved = repository.save(expense);
+        auditAndEvict(AuditEventType.EXPENSE_UPDATED, username, saved.getId(),
+                "Updated expense '" + saved.getDescription() + "'");
+        return mapper.toResponse(saved);
     }
 
     @Override
     @Transactional
     public void delete(Long id) {
-        Expense expense = repository.findByIdAndOwnerUsername(id, currentUsername())
+        String username = currentUsername();
+        Expense expense = repository.findByIdAndOwnerUsername(id, username)
                 .orElseThrow(() -> new ExpenseNotFoundException(id));
         repository.delete(expense);
+        auditAndEvict(AuditEventType.EXPENSE_DELETED, username, id,
+                "Deleted expense " + id);
     }
 
     @Override
-    @Transactional(readOnly = true)
     public SummaryResponse summary(LocalDate from, LocalDate to) {
-        List<CategorySummary> categories = repository.summarizeByCategory(currentUsername(), from, to);
-        BigDecimal grandTotal = categories.stream()
-                .map(CategorySummary::total)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new SummaryResponse(categories, grandTotal);
+        // Delegated to a separate bean so the @Cacheable interception actually fires. The single
+        // repository query inside is self-transactional, so no @Transactional is needed here.
+        return summaryCache.summarize(currentUsername(), from, to);
+    }
+
+    /**
+     * Publishes an audit event (persisted after commit) and evicts the user's cached summary.
+     * Shared by every write so the two cross-cutting concerns stay consistent.
+     */
+    private void auditAndEvict(AuditEventType type, String username, Long entityId, String detail) {
+        eventPublisher.publishEvent(new AuditableEvent(type, username, detail, entityId));
+        summaryCache.evict(username);
     }
 
     private String currentUsername() {
