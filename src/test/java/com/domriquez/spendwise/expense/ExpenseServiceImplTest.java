@@ -5,6 +5,10 @@ import com.domriquez.spendwise.expense.dto.CategorySummary;
 import com.domriquez.spendwise.expense.dto.ExpenseRequest;
 import com.domriquez.spendwise.expense.dto.ExpenseResponse;
 import com.domriquez.spendwise.expense.dto.SummaryResponse;
+import com.domriquez.spendwise.security.CurrentUserProvider;
+import com.domriquez.spendwise.user.Role;
+import com.domriquez.spendwise.user.User;
+import com.domriquez.spendwise.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +23,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,23 +31,33 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ExpenseServiceImplTest {
 
+    private static final String USERNAME = "alice";
+
     @Mock
     private ExpenseRepository repository;
+
+    @Mock
+    private UserRepository userRepository;
+
+    @Mock
+    private CurrentUserProvider currentUserProvider;
 
     private ExpenseService service;
 
     @BeforeEach
     void setUp() {
-        // Real mapper, mocked repository: we exercise actual mapping logic
-        // while controlling persistence behaviour.
-        service = new ExpenseServiceImpl(repository, new ExpenseMapper());
+        // Real mapper, mocked collaborators: we exercise the actual mapping logic while
+        // controlling persistence and the "who is logged in" decision.
+        service = new ExpenseServiceImpl(repository, new ExpenseMapper(), userRepository, currentUserProvider);
+        when(currentUserProvider.requireCurrentUsername()).thenReturn(USERNAME);
     }
 
     @Test
-    void create_persistsAndReturnsResponse() {
+    void create_assignsOwnerAndReturnsResponse() {
         ExpenseRequest request = new ExpenseRequest(
                 "Lunch", new BigDecimal("120.50"), Category.FOOD, LocalDate.now());
-
+        User owner = new User(USERNAME, "hash", Role.USER);
+        when(userRepository.findByUsername(USERNAME)).thenReturn(Optional.of(owner));
         when(repository.save(any(Expense.class))).thenAnswer(invocation -> {
             Expense entity = invocation.getArgument(0);
             entity.setId(1L);
@@ -59,15 +74,14 @@ class ExpenseServiceImplTest {
     }
 
     @Test
-    void getById_whenPresent_returnsResponse() {
+    void getById_whenOwnedByCurrentUser_returnsResponse() {
         Expense entity = new Expense();
         entity.setId(7L);
         entity.setDescription("Train ticket");
         entity.setAmount(new BigDecimal("45.00"));
         entity.setCategory(Category.TRANSPORT);
         entity.setDate(LocalDate.now());
-
-        when(repository.findById(7L)).thenReturn(Optional.of(entity));
+        when(repository.findByIdAndOwnerUsername(7L, USERNAME)).thenReturn(Optional.of(entity));
 
         ExpenseResponse response = service.getById(7L);
 
@@ -76,8 +90,9 @@ class ExpenseServiceImplTest {
     }
 
     @Test
-    void getById_whenMissing_throwsNotFound() {
-        when(repository.findById(99L)).thenReturn(Optional.empty());
+    void getById_whenMissingOrNotOwned_throwsNotFound() {
+        // Empty also covers "exists but belongs to someone else" — the query is owner-scoped.
+        when(repository.findByIdAndOwnerUsername(99L, USERNAME)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getById(99L))
                 .isInstanceOf(ExpenseNotFoundException.class)
@@ -85,22 +100,22 @@ class ExpenseServiceImplTest {
     }
 
     @Test
-    void delete_whenMissing_throwsAndDoesNotDelete() {
-        when(repository.existsById(99L)).thenReturn(false);
+    void delete_whenMissingOrNotOwned_throwsAndDoesNotDelete() {
+        when(repository.findByIdAndOwnerUsername(99L, USERNAME)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.delete(99L))
                 .isInstanceOf(ExpenseNotFoundException.class);
 
-        verify(repository, never()).deleteById(any());
+        verify(repository, never()).delete(any());
     }
 
     @Test
-    void summary_aggregatesGrandTotal() {
+    void summary_aggregatesGrandTotalForCurrentUser() {
         List<CategorySummary> categoryTotals = List.of(
                 new CategorySummary(Category.FOOD, new BigDecimal("100.00")),
                 new CategorySummary(Category.TRANSPORT, new BigDecimal("55.50"))
         );
-        when(repository.summarizeByCategory(any(), any())).thenReturn(categoryTotals);
+        when(repository.summarizeByCategory(eq(USERNAME), any(), any())).thenReturn(categoryTotals);
 
         SummaryResponse summary = service.summary(null, null);
 
