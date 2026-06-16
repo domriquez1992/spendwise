@@ -12,7 +12,7 @@ import jakarta.persistence.Table;
 /**
  * An application user who can authenticate. Mapped to the "users" table on purpose:
  * "user" is a reserved word in PostgreSQL (and H2), so the unquoted table name would fail.
- * The stored password is always a BCrypt hash — the raw value is never persisted.
+ * The stored password is always a BCrypt hash â€” the raw value is never persisted.
  */
 @Entity
 @Table(name = "users")
