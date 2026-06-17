@@ -40,18 +40,6 @@ jobs:
       - name: Build images and start the stack
         run: docker compose up -d --build
 
-      - name: Diagnose — environment actually present in the app container
-        run: |
-          echo "===== SPRING_/KAFKA_/JWT_ variables inside the app container ====="
-          APP=$(docker compose ps -aq app)
-          if [ -z "$APP" ]; then
-            echo ">>> app container was not created <<<"
-          else
-            docker inspect "$APP" --format '{{range .Config.Env}}{{println .}}{{end}}' \
-              | grep -E "SPRING_|KAFKA_|JWT_" \
-              || echo ">>> NONE present — Compose is not passing the environment to the app container <<<"
-          fi
-
       - name: Wait for the application to become healthy
         run: |
           echo "Waiting for http://localhost:8080/actuator/health to report UP..."
