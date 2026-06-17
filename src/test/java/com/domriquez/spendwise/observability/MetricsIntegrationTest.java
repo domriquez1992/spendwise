@@ -1,32 +1,47 @@
 package com.domriquez.spendwise.observability;
 
 import com.domriquez.spendwise.AbstractIntegrationTest;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
-import static org.hamcrest.Matchers.containsString;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Verifies the observability metrics pipeline end to end: creating an expense increments the custom
- * domain counter, and the Prometheus scrape endpoint (reachable without authentication) renders it.
+ * Verifies the observability metrics pipeline end to end: creating an expense records the custom
+ * domain counter, that counter is held by the same registry the Actuator scrapes, and the
+ * Prometheus scrape endpoint (reachable without authentication) renders it.
  */
 class MetricsIntegrationTest extends AbstractIntegrationTest {
 
+    @Autowired
+    private MeterRegistry meterRegistry;
+
     @Test
     void prometheusEndpointExposesCustomDomainMetric() throws Exception {
-        // Drive one real, committed expense creation so the AFTER_COMMIT metrics listener fires.
         register("metrics-user", "password123");
         String token = login("metrics-user", "password123");
         createExpense(token);
 
-        // The scrape endpoint is permitted without a token. It must render a baseline JVM meter
-        // (proving the Prometheus registry is active) and our custom counter. Asserting the base
-        // name (the Prometheus exposition appends _total to counters) keeps this robust.
-        mockMvc.perform(get("/actuator/prometheus"))
+        Counter counter = meterRegistry.find("spendwise.expenses.created").counter();
+        String diag = "registry=" + meterRegistry.getClass().getName()
+                + " counterRegistered=" + (counter != null)
+                + " count=" + (counter != null ? counter.count() : -1.0);
+
+        // The custom counter must live in the registry that backs the scrape endpoint.
+        assertThat(counter).as("custom counter not found in MeterRegistry -- " + diag).isNotNull();
+
+        // ...and the Prometheus endpoint must render it (base name; the exposition appends _total),
+        // alongside a baseline JVM meter proving the registry is being scraped.
+        String body = mockMvc.perform(get("/actuator/prometheus"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("jvm_memory_used_bytes")))
-                .andExpect(content().string(containsString("spendwise_expenses_created")));
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body)
+                .as("Prometheus scrape missing the custom counter -- " + diag)
+                .contains("jvm_memory_used_bytes")
+                .contains("spendwise_expenses_created");
     }
 }
