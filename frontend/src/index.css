@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Per-category accents for badges, breakdown bars, and the summary chart.
+     Medium-saturation earth tones that sit calmly against the paper/ink palette. */
+  --color-cat-food: #c2703d;
+  --color-cat-transport: #3f6f9f;
+  --color-cat-housing: #0f6b5c;
+  --color-cat-entertainment: #8a5cb4;
+  --color-cat-health: #c0506a;
+  --color-cat-utilities: #b58a2e;
+  --color-cat-other: #6b7a73;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand ring-offset-2 ring-offset-canvas;
+  }
+}
+
+@layer utilities {
+  /* Money and other figures align in columns. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
