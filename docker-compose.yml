@@ -1,3 +1,7 @@
+# Full local stack: the Spring Boot application plus every backing service it needs.
+# Bring it all up with:  docker compose up --build
+# The app waits for each datastore to report healthy before starting, then exposes the API
+# on http://localhost:8080 (health at http://localhost:8080/actuator/health).
 services:
   db:
     image: postgres:17
@@ -13,15 +17,16 @@ services:
       test: ["CMD-SHELL", "pg_isready -U spendwise -d spendwise"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   kafka:
     image: apache/kafka:4.0.0
     ports:
       - "9092:9092"
     environment:
-      # Single-node KRaft (no ZooKeeper). The app reaches the broker at kafka:9092 on the
-      # compose network; host tools can use localhost:9092.
+      # Single-node KRaft (no ZooKeeper). The broker is one node acting as both broker and
+      # controller. The app reaches it at kafka:9092 over the compose network, which is what the
+      # PLAINTEXT listener advertises.
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -33,6 +38,36 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # A fixed cluster id keeps the formatted storage stable across restarts.
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   app:
     build: .
@@ -40,14 +75,25 @@ services:
       db:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      # Point every connection at the service name on the compose network instead of localhost.
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/spendwise
       SPRING_DATASOURCE_USERNAME: spendwise
       SPRING_DATASOURCE_PASSWORD: spendwise
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/spendwise
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      # Demo secret for local use only; override in any real deployment.
+      JWT_SECRET: compose-demo-secret-please-override-0123456789-abcdefghij
     ports:
       - "8080:8080"
 
 volumes:
   pgdata:
+  mongodata:
