@@ -68,3 +68,102 @@ jobs:
       - name: Tear down the stack
         if: always()
         run: docker compose down -v
+
+  k8s-validate:
+    # Fast schema gate: render the kustomize overlay and validate every manifest against the
+    # Kubernetes JSON schemas. Catches malformed YAML in seconds, before the expensive deploy job.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
+          sudo install /tmp/kubeconform /usr/local/bin/kubeconform
+
+      - name: Render and validate manifests
+        run: |
+          kubectl kustomize k8s/overlays/dev > /tmp/rendered.yaml
+          echo "----- rendered manifests -----"
+          cat /tmp/rendered.yaml
+          echo "----- validating -----"
+          kubeconform -strict -summary -ignore-missing-schemas /tmp/rendered.yaml
+
+  k8s-deploy:
+    # Proves the manifests actually deploy: spin up an ephemeral kind cluster, build and load the
+    # app image, apply the overlay, wait for every workload to roll out, and smoke-test the health
+    # endpoint. A green run certifies the whole system stands up on Kubernetes and the probes brought
+    # it into service -- no green-by-disabling.
+    needs: k8s-validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create a kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: spendwise
+
+      - name: Build the application image
+        run: docker build -t spendwise:dev .
+
+      - name: Load the image into the cluster
+        run: kind load docker-image spendwise:dev --name spendwise
+
+      - name: Deploy the stack
+        run: kubectl apply -k k8s/overlays/dev
+
+      - name: Wait for the datastores
+        run: |
+          kubectl -n spendwise rollout status statefulset/db    --timeout=180s
+          kubectl -n spendwise rollout status statefulset/mongo --timeout=180s
+          kubectl -n spendwise rollout status statefulset/kafka --timeout=240s
+          kubectl -n spendwise rollout status deployment/redis  --timeout=120s
+
+      - name: Wait for the application
+        run: kubectl -n spendwise rollout status deployment/spendwise --timeout=300s
+
+      - name: Smoke-test the health endpoint
+        run: |
+          kubectl -n spendwise port-forward svc/spendwise 8080:8080 >/tmp/pf.log 2>&1 &
+          PF_PID=$!
+          sleep 6
+          ok=0
+          for i in $(seq 1 10); do
+            if curl -fsS http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
+              echo "Health is UP after ${i} attempt(s)."
+              ok=1; break
+            fi
+            echo "Attempt ${i}/10: not UP yet, waiting 3s..."
+            sleep 3
+          done
+          kill "$PF_PID" 2>/dev/null || true
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::Health endpoint did not report UP."
+            exit 1
+          fi
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "----- pods -----"
+          kubectl -n spendwise get pods -o wide || true
+          echo "----- describe pods -----"
+          kubectl -n spendwise describe pods || true
+          echo "----- recent events -----"
+          kubectl -n spendwise get events --sort-by=.lastTimestamp || true
+          for c in db mongo kafka redis spendwise; do
+            echo "----- logs: ${c} -----"
+            kubectl -n spendwise logs -l "app=${c}" --tail=120 --all-containers --prefix || true
+          done
+
+      - name: Tear down
+        if: always()
+        run: kubectl delete -k k8s/overlays/dev --ignore-not-found --wait=false || true
