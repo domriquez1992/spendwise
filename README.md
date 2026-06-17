@@ -1,8 +1,8 @@
-# Spendwise — Expense Tracker REST API
+# Spendwise — Full-Stack Expense Tracker (Spring Boot + React)
 
 ![CI](https://github.com/domriquez1992/spendwise/actions/workflows/ci.yml/badge.svg)
 
-A small but production-shaped REST API for tracking personal expenses, built with **Java 21** and **Spring Boot 4**. It demonstrates a clean layered architecture, **stateless JWT authentication** (Spring Security), **per-user data ownership** and **role-based authorization**, **event-driven processing with Apache Kafka** (creating an expense asynchronously raises budget notifications), **polyglot persistence** (a **MongoDB** audit log of domain events and a **Redis** cache over the spending summary), health probes via Spring Boot Actuator, input validation, consistent error handling, an aggregation endpoint, automated tests (including full security, data-isolation, and end-to-end Kafka/Mongo/Redis integration tests), full-stack containerization with Docker Compose, and a CI pipeline that builds the image and smoke-tests the running stack.
+A small but production-shaped REST API for tracking personal expenses, built with **Java 21** and **Spring Boot 4**. It demonstrates a clean layered architecture, **stateless JWT authentication** (Spring Security), **per-user data ownership** and **role-based authorization**, **event-driven processing with Apache Kafka** (creating an expense asynchronously raises budget notifications), **polyglot persistence** (a **MongoDB** audit log of domain events and a **Redis** cache over the spending summary), health probes via Spring Boot Actuator, input validation, consistent error handling, an aggregation endpoint, automated tests (including full security, data-isolation, and end-to-end Kafka/Mongo/Redis integration tests), full-stack containerization with Docker Compose, and a CI pipeline that builds the image and smoke-tests the running stack. A **React + TypeScript** single-page app (Vite, TanStack Query, Tailwind CSS) provides a browser UI over the same API — registration and login, paged expense management, and a category spending summary — so the whole system is demoable end-to-end.
 
 ---
 
@@ -12,17 +12,18 @@ A small but production-shaped REST API for tracking personal expenses, built wit
 |------|--------|
 | Language | Java 21 (LTS) |
 | Framework | Spring Boot 4.0.x (Spring Web, Spring Data JPA, Bean Validation) |
+| Frontend | React 18 + TypeScript (Vite), TanStack Query, React Router, React Hook Form + Zod, Tailwind CSS, Recharts |
 | Security | Spring Security 7, JWT (jjwt 0.12), BCrypt password hashing |
 | Messaging | Apache Kafka (Spring for Apache Kafka 4, KRaft) |
 | Data stores | PostgreSQL 17 (transactional data), MongoDB 7 (audit log), Redis 7 (summary cache); H2 in-memory for tests |
 | Caching | Spring Cache backed by Redis (`RedisCacheManager`) |
 | Observability | Spring Boot Actuator — `/actuator/health` with liveness/readiness probe groups |
 | Build | Maven |
-| Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka, MongoDB, Redis), Awaitility |
+| Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka, MongoDB, Redis), Awaitility; Vitest + React Testing Library on the frontend |
 | Container | Docker (multi-stage build, non-root), Docker Compose (full stack) |
 | Orchestration | Kubernetes (Kustomize base + overlay, StatefulSets, ConfigMap/Secret, health-probe wiring) |
 | Infrastructure | Terraform (AWS ECS Fargate + ALB + RDS PostgreSQL + Secrets Manager + IAM), validated in CI |
-| CI/CD | GitHub Actions — build + tests, Compose smoke test, Kubernetes validate + kind deploy, Terraform validate, and a multi-arch image published to GHCR |
+| CI/CD | GitHub Actions — build + tests, Compose smoke test, Kubernetes validate + kind deploy, Terraform validate, frontend lint/type-check/test/build, and a multi-arch image published to GHCR |
 
 ---
 
@@ -143,6 +144,20 @@ kubectl -n spendwise port-forward svc/spendwise 8080:8080
 ```
 
 PostgreSQL, MongoDB, and Kafka run as **StatefulSets** with their own persistent volumes; Redis runs as a stateless **Deployment**. The application is a 2-replica **Deployment** whose **liveness/readiness/startup probes** are wired to the Spring Boot actuator health groups — the readiness probe reports ready only once PostgreSQL, MongoDB, and Redis are reachable, so a pod takes traffic only when it can actually serve it. Configuration comes from a `ConfigMap`, credentials from a `Secret`, and an init container holds app startup until every dependency is accepting connections.
+
+### Frontend (React SPA)
+
+A single-page app built with **React 18, TypeScript, and Vite** lives in [`frontend/`](frontend/) and consumes the same API. With the backend running on `http://localhost:8080` (Option A or B):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The dev server starts on `http://localhost:5173` and proxies `/api` to the backend, so there are no CORS concerns in development. Register an account, log in, add and edit expenses across pages, and view the per-category spending breakdown as a donut chart. Authentication is a JWT held in the browser and sent as a `Bearer` token; a `401` clears it and bounces you back to the login screen.
+
+Other scripts: `npm run build` (type-check + production bundle to `dist/`), `npm run test` (Vitest unit tests), `npm run lint`, and `npm run typecheck` — all four run in CI on every push.
 
 ### Pre-built container image
 
@@ -428,5 +443,6 @@ This is the foundation of a larger portfolio. Natural next steps:
 - ~~Full-stack Docker Compose (app + PostgreSQL + Kafka + MongoDB + Redis), health-gated startup, and a CI smoke test of the running stack~~ ✅ done — see Getting started
 - ~~Kubernetes deployment with health-probe-driven orchestration, validated and deployed in CI on an ephemeral kind cluster~~ ✅ done — see Getting started (Option C) and the `k8s/` manifests
 - ~~Cloud deployment + CI/CD — multi-arch image published to GHCR after the full pipeline passes, plus Terraform IaC for AWS ECS Fargate validated in CI~~ ✅ done — see the deployment sections and `infra/terraform/`
+- ~~React + TypeScript frontend — a Vite single-page app over the API (registration/login, paged expense CRUD, and a category spending chart), with lint, type-check, unit tests, and a production build gated in CI~~ ✅ done — see Getting started (Frontend) and the [`frontend/`](frontend/) directory
 - Interactive API docs with OpenAPI / Swagger UI
 - Versioned schema migrations (Flyway)
