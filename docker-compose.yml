@@ -81,16 +81,10 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # Point every connection at the service name on the compose network instead of localhost.
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/spendwise
-      SPRING_DATASOURCE_USERNAME: spendwise
-      SPRING_DATASOURCE_PASSWORD: spendwise
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/spendwise
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PORT: 6379
-      # Demo secret for local use only; override in any real deployment.
-      JWT_SECRET: compose-demo-secret-please-override-0123456789-abcdefghij
+      # Activate application-docker.yml, which points every connection at its Compose service
+      # name. Profile activation is independent of per-property binding, so it is not affected by
+      # the env-var/placeholder binding pitfall.
+      SPRING_PROFILES_ACTIVE: docker
     ports:
       - "8080:8080"
 

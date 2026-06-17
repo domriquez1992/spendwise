@@ -1,0 +1,24 @@
+# Configuration profile for running inside the Docker Compose stack.
+#
+# Activated by SPRING_PROFILES_ACTIVE=docker (set in docker-compose.yml). Every dependency is
+# reachable by its Compose service name on the shared network, so these concrete values override
+# the localhost defaults in application.yml. Using a profile with plain values (rather than a
+# per-property environment override for each setting) keeps the wiring explicit and robust.
+spring:
+  datasource:
+    url: jdbc:postgresql://db:5432/spendwise
+    username: spendwise
+    password: spendwise
+  kafka:
+    bootstrap-servers: kafka:9092
+  data:
+    mongodb:
+      uri: mongodb://mongo:27017/spendwise
+    redis:
+      host: redis
+      port: 6379
+
+app:
+  jwt:
+    # Demo secret for the local Compose stack only; override in any real deployment.
+    secret: compose-demo-secret-please-override-0123456789-abcdefghij
