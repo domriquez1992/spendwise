@@ -66,3 +66,16 @@ app:
     # When a user's spending in a category for the month exceeds this amount, a budget
     # notification is generated. Override per environment via APP_BUDGET_MONTHLY_CATEGORY_LIMIT.
     monthly-category-limit: ${APP_BUDGET_MONTHLY_CATEGORY_LIMIT:1000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Expose only the health endpoint over HTTP; other actuator endpoints stay internal.
+        include: health
+  endpoint:
+    health:
+      # Enable the liveness/readiness probe groups, used by container orchestrators (and the
+      # Compose/Kubernetes probes in later iterations).
+      probes:
+        enabled: true

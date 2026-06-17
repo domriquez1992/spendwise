@@ -27,6 +27,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!--
+            Actuator exposes a /actuator/health endpoint that aggregates the health of the
+            datasource, MongoDB, and Redis (Spring Boot's built-in indicators). The CI Compose
+            smoke test polls it, and it provides the liveness/readiness probe groups.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
