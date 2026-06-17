@@ -13,7 +13,9 @@ spring:
     bootstrap-servers: kafka:9092
   data:
     mongodb:
-      uri: mongodb://mongo:27017/spendwise
+      host: mongo
+      port: 27017
+      database: spendwise
     redis:
       host: redis
       port: 6379

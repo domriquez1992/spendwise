@@ -36,12 +36,15 @@ spring:
         spring.json.trusted.packages: com.domriquez.spendwise.event
   data:
     mongodb:
-      # Audit-log document store. Plain literal default on purpose (NOT a ${ENV:...} placeholder):
-      # Spring Boot 4 does not reliably bind a placeholder-valued spring.data.mongodb.uri when a
-      # profile supplies an override, and silently falls back to localhost (see the Compose docker
-      # profile, which sets the concrete service URI). The integration test overrides this entirely
-      # via Testcontainers @ServiceConnection, so the literal here only affects plain local runs.
-      uri: mongodb://localhost:27017/spendwise
+      # Audit-log document store. Configured with the individual host/port/database properties
+      # rather than a single `uri`: Spring Boot's MongoProperties ignores `spring.data.mongodb.uri`
+      # when any other `spring.data.mongodb.*` property (here, auto-index-creation) is set in the
+      # same config, silently falling back to localhost:27017. The host/port form binds cleanly and
+      # is overridden by the "docker" profile (mongo:27017) for the Compose stack. The integration
+      # test overrides this entirely via Testcontainers @ServiceConnection.
+      host: localhost
+      port: 27017
+      database: spendwise
       auto-index-creation: true
     redis:
       # Cache backing store. Plain literal defaults for the same Boot 4 binding reason as mongodb
