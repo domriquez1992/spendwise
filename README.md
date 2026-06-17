@@ -21,7 +21,8 @@ A small but production-shaped REST API for tracking personal expenses, built wit
 | Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka, MongoDB, Redis), Awaitility |
 | Container | Docker (multi-stage build, non-root), Docker Compose (full stack) |
 | Orchestration | Kubernetes (Kustomize base + overlay, StatefulSets, ConfigMap/Secret, health-probe wiring) |
-| CI | GitHub Actions — build + tests, a Compose smoke test, and Kubernetes manifest validation + a kind deploy |
+| Infrastructure | Terraform (AWS ECS Fargate + ALB + RDS PostgreSQL + Secrets Manager + IAM), validated in CI |
+| CI/CD | GitHub Actions — build + tests, Compose smoke test, Kubernetes validate + kind deploy, Terraform validate, and a multi-arch image published to GHCR |
 
 ---
 
@@ -142,6 +143,18 @@ kubectl -n spendwise port-forward svc/spendwise 8080:8080
 ```
 
 PostgreSQL, MongoDB, and Kafka run as **StatefulSets** with their own persistent volumes; Redis runs as a stateless **Deployment**. The application is a 2-replica **Deployment** whose **liveness/readiness/startup probes** are wired to the Spring Boot actuator health groups — the readiness probe reports ready only once PostgreSQL, MongoDB, and Redis are reachable, so a pod takes traffic only when it can actually serve it. Configuration comes from a `ConfigMap`, credentials from a `Secret`, and an init container holds app startup until every dependency is accepting connections.
+
+### Pre-built container image
+
+Every commit that passes the full pipeline is published as a **multi-architecture image** (`linux/amd64` + `linux/arm64`) to the GitHub Container Registry, with build provenance and an SBOM attached:
+
+```bash
+docker pull ghcr.io/domriquez1992/spendwise:latest
+```
+
+### Deploying to AWS
+
+Infrastructure-as-Code for an **AWS ECS Fargate** deployment (ALB + RDS PostgreSQL + Secrets Manager + IAM) lives under [`infra/terraform/`](infra/terraform/). CI validates it (`fmt`, `validate`, `tflint`) on every push; `terraform apply` is run against your own AWS account. See the [infra README](infra/terraform/README.md) for the full walkthrough and trade-offs.
 
 ---
 
@@ -397,6 +410,10 @@ A few choices worth calling out:
 - **Stateful vs stateless, modelled honestly.** PostgreSQL, MongoDB, and Kafka are `StatefulSet`s with their own `PersistentVolumeClaim`s; Redis — a disposable cache — is a plain `Deployment` with no volume. The application is a multi-replica `Deployment` because identity lives in the JWT, not in server-side session state. An init container blocks app startup until every dependency accepts connections, giving a deterministic bring-up order rather than relying on crash-loop-and-retry.
 - **Config and secrets are externalized, and the manifests are layered.** Non-secret settings come from a `ConfigMap` (including which Spring profile to run) and credentials from a `Secret`, both consumed via `envFrom` — no configuration baked into the image. The manifests use Kustomize (a `base` plus a `dev` overlay) so environment-specific concerns like the image tag stay out of the base. The same connection topology is expressed once as a `k8s` Spring profile, mirroring the Compose service names.
 - **Manifests are validated *and* deployed in CI.** A fast `k8s-validate` job renders the overlay and checks every manifest against the Kubernetes schemas with `kubeconform`; only if that passes does `k8s-deploy` spin up an ephemeral kind cluster, load the freshly built image, apply the overlay, wait for every rollout, and smoke-test the health endpoint. The schema gate fails in seconds on a typo; the deploy gate proves the system genuinely runs on Kubernetes.
+- **Images are published only after the whole pipeline is green.** The `publish` job depends on the tests *and* both deploy verifications, and runs only on `main`. So nothing reaches the registry unless it built, passed the test suite, came up under Compose, and came up on Kubernetes — the registry only ever holds images that are known to run.
+- **Multi-arch images, built the way Java should be.** A Spring Boot jar is platform-independent bytecode, so CI compiles it once natively and layers that same jar onto the JRE base for each architecture (`linux/amd64` + `linux/arm64`) — genuine multi-arch without the cost of recompiling the application under emulation. Build provenance and an SBOM are attached to the image, so consumers can verify how it was built and what it contains.
+- **Infrastructure as code, validated without an account.** The AWS deployment (ECS Fargate + ALB + RDS + Secrets Manager + IAM) is expressed in Terraform and checked in CI with `fmt`, `validate`, and `tflint` — `validate` checks the config against the AWS provider schema without ever contacting AWS, so the IaC is continuously verified with no credentials in the pipeline. Sensitive values are sourced from Secrets Manager and injected into the task by ARN, never committed or placed in plaintext environment. Provisioning real infrastructure (`terraform apply`) is left to the operator's own account — honest about where the cloud-account boundary sits.
+- **Two deployment targets, on purpose.** The same image runs on Kubernetes (a cluster you operate) and on ECS Fargate (serverless containers) — deliberately different paradigms, to show the application isn't coupled to one runtime and to demonstrate breadth rather than repeating the same pattern twice.
 
 ---
 
@@ -410,6 +427,6 @@ This is the foundation of a larger portfolio. Natural next steps:
 - ~~Polyglot persistence — MongoDB audit log and Redis summary cache~~ ✅ done — see the Polyglot persistence section and the Audit endpoints
 - ~~Full-stack Docker Compose (app + PostgreSQL + Kafka + MongoDB + Redis), health-gated startup, and a CI smoke test of the running stack~~ ✅ done — see Getting started
 - ~~Kubernetes deployment with health-probe-driven orchestration, validated and deployed in CI on an ephemeral kind cluster~~ ✅ done — see Getting started (Option C) and the `k8s/` manifests
-- Deployment to a cloud provider with a CI/CD pipeline
+- ~~Cloud deployment + CI/CD — multi-arch image published to GHCR after the full pipeline passes, plus Terraform IaC for AWS ECS Fargate validated in CI~~ ✅ done — see the deployment sections and `infra/terraform/`
 - Interactive API docs with OpenAPI / Swagger UI
 - Versioned schema migrations (Flyway)
