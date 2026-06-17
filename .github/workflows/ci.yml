@@ -66,7 +66,14 @@ jobs:
           echo "::error::Application did not become healthy in time."
           echo "----- docker compose ps -----"
           docker compose ps
-          echo "----- docker compose logs -----"
+          echo "----- app: profile, datastore targets, startup result -----"
+          docker compose logs app --no-color 2>&1 \
+            | grep -iE "profile is active|No active profile|address=|Started Spendwise|cancelling refresh|APPLICATION FAILED|Connection refused" \
+            | head -40 || true
+          echo "----- app: /actuator/health body -----"
+          curl -fsS http://localhost:8080/actuator/health || echo "(health endpoint unreachable)"
+          echo
+          echo "----- docker compose logs (full) -----"
           docker compose logs --no-color
           exit 1
 
