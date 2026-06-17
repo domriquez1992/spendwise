@@ -80,11 +80,34 @@ management:
   endpoints:
     web:
       exposure:
-        # Expose only the health endpoint over HTTP; other actuator endpoints stay internal.
-        include: health
+        # health + the readiness/liveness probe groups (orchestration), info (build metadata),
+        # metrics (browseable meter list), and prometheus (the scrape endpoint). Everything else
+        # stays internal. In production these management endpoints would typically be bound to a
+        # separate, network-restricted port (management.server.port); they are on the main port
+        # here to keep the demo single-port and the existing probes/smoke tests unchanged.
+        include: health, info, metrics, prometheus
   endpoint:
     health:
       # Enable the liveness/readiness probe groups, used by container orchestrators (and the
-      # Compose/Kubernetes probes in later iterations).
+      # Compose/Kubernetes probes).
       probes:
         enabled: true
+  metrics:
+    tags:
+      # Tag every meter with the application name so a multi-service Prometheus can distinguish them.
+      application: ${spring.application.name}
+  # Metrics pipeline: Prometheus scrapes /actuator/prometheus. The OpenTelemetry starter also ships
+  # an OTLP metrics registry that would otherwise push metrics to localhost:4318; disable it so
+  # there is exactly one metrics path (Prometheus scrape) and nothing tries to reach a collector.
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  # Distributed tracing. Sample every request (appropriate for a low-traffic demo; lower in
+  # production) so each request carries a trace/span id that Micrometer Tracing puts into the
+  # logging MDC. Spans are exported only when an OTLP endpoint is configured (the observability
+  # overlay sets management.opentelemetry.tracing.export.otlp.endpoint to Tempo); unset here, so
+  # the default run and CI generate ids locally without exporting anything.
+  tracing:
+    sampling:
+      probability: 1.0

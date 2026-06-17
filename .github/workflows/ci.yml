@@ -72,6 +72,11 @@ jobs:
       - name: Validate the Compose file
         run: docker compose config -q
 
+      - name: Validate the observability overlay
+        # Cheap structural check that the observability overlay merges and parses. It is NOT started
+        # here -- the smoke test below brings up only the base stack, so CI behaviour is unchanged.
+        run: docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
+
       - name: Build images and start the stack
         run: docker compose up -d --build
 

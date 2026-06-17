@@ -1,0 +1,60 @@
+# Observability overlay (Project 10). Adds the Prometheus + Tempo + Grafana stack and rewires the
+# app to export traces and emit structured JSON logs. This is a SEPARATE file so the base
+# docker-compose.yml (and therefore CI's `docker compose up`) is completely unchanged.
+#
+# Run the full stack with:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+#
+# Then open:  Grafana http://localhost:3000  (anonymous admin)
+#             Prometheus http://localhost:9090   Tempo http://localhost:3200
+services:
+  # Override only: keep every setting from the base app service and add observability wiring.
+  app:
+    environment:
+      # Turning on the OTLP endpoint is what actually starts trace export (it is off until set),
+      # so the base stack and CI never try to reach a collector. Here it points at Tempo.
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://tempo:4318/v1/traces
+      # Emit machine-readable ECS JSON logs (with trace/span ids from the MDC) for this stack;
+      # the base run keeps human-readable console logs.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+    depends_on:
+      tempo:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v3.9.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  tempo:
+    image: grafana/tempo:2.10.1
+    command:
+      - -config.file=/etc/tempo.yaml
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo.yaml:ro
+    ports:
+      - "3200:3200"   # Tempo query / UI API
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+
+  grafana:
+    image: grafana/grafana:12.3.0
+    environment:
+      # Open the UI without a login for the demo; provisioned data sources + dashboard load on boot.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started

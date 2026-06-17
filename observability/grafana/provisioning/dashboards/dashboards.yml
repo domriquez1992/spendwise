@@ -1,0 +1,12 @@
+# Auto-load committed dashboards from disk at startup, so the overview dashboard is present the
+# first time Grafana opens -- no manual import, the dashboard is version-controlled as code.
+apiVersion: 1
+
+providers:
+  - name: spendwise
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

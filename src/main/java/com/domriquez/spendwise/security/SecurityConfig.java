@@ -46,7 +46,13 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/**").permitAll()
-                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        // Operational endpoints are unauthenticated so Prometheus can scrape and
+                        // orchestrators can probe. /actuator/prometheus exposes only meter values
+                        // (no business data); in production these would be isolated on a separate
+                        // management port or network instead of being publicly reachable.
+                        .requestMatchers(
+                                "/actuator/health", "/actuator/health/**",
+                                "/actuator/info", "/actuator/prometheus").permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))

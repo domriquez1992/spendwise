@@ -1,0 +1,32 @@
+# Minimal single-binary Grafana Tempo configuration for local trace storage.
+# Receives spans over OTLP (HTTP 4318 / gRPC 4317) from the application and stores them on the
+# container's local filesystem. Storage is ephemeral (no mounted volume over /var/tempo, which the
+# image already owns as uid 10001), which is fine for a demo: traces live for the session.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 1h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

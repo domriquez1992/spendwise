@@ -17,7 +17,7 @@ A small but production-shaped REST API for tracking personal expenses, built wit
 | Messaging | Apache Kafka (Spring for Apache Kafka 4, KRaft) |
 | Data stores | PostgreSQL 17 (transactional data), MongoDB 7 (audit log), Redis 7 (summary cache); H2 in-memory for tests |
 | Caching | Spring Cache backed by Redis (`RedisCacheManager`) |
-| Observability | Spring Boot Actuator — `/actuator/health` with liveness/readiness probe groups |
+| Observability | Spring Boot Actuator (`/actuator/health` probes, `/actuator/info`); Micrometer + Prometheus metrics with custom domain meters; OpenTelemetry tracing over OTLP to Grafana Tempo; structured ECS JSON logs with trace correlation; Grafana dashboards as code |
 | Build | Maven |
 | Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka, MongoDB, Redis), Awaitility; Vitest + React Testing Library on the frontend |
 | Container | Docker (multi-stage build, non-root), Docker Compose (full stack) |
@@ -96,6 +96,24 @@ Different data shapes get the store that fits them. The transactional expense an
 - **Summary cache → Redis.** The per-user spending summary (a `GROUP BY` aggregation) is cached in Redis keyed by username, and evicted whenever that user writes an expense. The cache lives in its own bean so Spring's caching proxy actually intercepts the call, and only the unfiltered default view is cached, which keeps the key simple and eviction precise.
 
 Both are wired in tests with real **Testcontainers** MongoDB and Redis instances (via Spring Boot's `@ServiceConnection`), so the audit trail and the cache populate/evict against the genuine engines, not mocks.
+
+---
+
+## Observability
+
+The app ships the three pillars of observability, each wired so it lights up locally with one command.
+
+- **Metrics (Prometheus).** Micrometer renders metrics at `/actuator/prometheus` for Prometheus to scrape. On top of the built-in JVM, HTTP, datasource, and cache metrics, a custom domain meter — `spendwise_expenses_created_total`, labelled by `category` — is incremented by an `@TransactionalEventListener(AFTER_COMMIT)` on `ExpenseCreatedEvent`, so it counts only committed creations without touching the service code or its tests.
+- **Tracing (OpenTelemetry → Tempo).** `spring-boot-starter-opentelemetry` exports spans over OTLP to Grafana Tempo, following a request across the HTTP → service → Kafka publish hop. Export turns on only when the OTLP endpoint is set (the overlay does this), so the base stack and CI never reach for a collector.
+- **Logs (structured ECS JSON).** Under the observability stack the app emits Elastic Common Schema JSON, and because Micrometer Tracing puts `traceId`/`spanId` into the logging MDC, every line is trace-correlated.
+
+Bring up the app plus a pre-wired **Grafana + Prometheus + Tempo** stack with a committed dashboard:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+```
+
+Then open **Grafana at http://localhost:3000** (anonymous admin; the *Spendwise — Overview* dashboard, data sources, Prometheus at `:9090`, and Tempo at `:3200` are all provisioned as code). The observability services are local-only and never run in CI — CI just validates that the overlay parses and merges. Full details and the production caveats are in [`observability/`](observability/).
 
 ---
 
@@ -444,5 +462,6 @@ This is the foundation of a larger portfolio. Natural next steps:
 - ~~Kubernetes deployment with health-probe-driven orchestration, validated and deployed in CI on an ephemeral kind cluster~~ ✅ done — see Getting started (Option C) and the `k8s/` manifests
 - ~~Cloud deployment + CI/CD — multi-arch image published to GHCR after the full pipeline passes, plus Terraform IaC for AWS ECS Fargate validated in CI~~ ✅ done — see the deployment sections and `infra/terraform/`
 - ~~React + TypeScript frontend — a Vite single-page app over the API (registration/login, paged expense CRUD, and a category spending chart), with lint, type-check, unit tests, and a production build gated in CI~~ ✅ done — see Getting started (Frontend) and the [`frontend/`](frontend/) directory
+- ~~Observability — Prometheus metrics (with custom domain meters), OpenTelemetry tracing to Grafana Tempo, and structured ECS JSON logs with trace correlation, behind a one-command Grafana/Prometheus/Tempo stack~~ ✅ done — see the [Observability](#observability) section and the [`observability/`](observability/) directory
 - Interactive API docs with OpenAPI / Swagger UI
 - Versioned schema migrations (Flyway)

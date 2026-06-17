@@ -1,0 +1,26 @@
+# Auto-provisioned Grafana data sources. Loaded at startup from
+# /etc/grafana/provisioning/datasources, so Grafana comes up already wired to the stack.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Enable the service-graph / node-graph view and link traces to the Prometheus metrics
+      # data source so a trace can pivot to the related request metrics.
+      nodeGraph:
+        enabled: true
+      tracesToMetrics:
+        datasourceUid: prometheus

@@ -1,0 +1,17 @@
+# Prometheus scrape configuration for the local observability stack.
+# Prometheus pulls metrics from the application's Actuator endpoint every 15s.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # The Spring Boot application. Reached by its Compose service name on the shared network.
+  - job_name: spendwise
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["app:8080"]
+
+  # Prometheus scraping its own metrics, so the stack is self-observable.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
