@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/domriquez1992/spendwise/actions/workflows/ci.yml/badge.svg)
 
-A small but production-shaped REST API for tracking personal expenses, built with **Java 21** and **Spring Boot 4**. It demonstrates a clean layered architecture, **stateless JWT authentication** (Spring Security), **per-user data ownership** and **role-based authorization**, **event-driven processing with Apache Kafka** (creating an expense asynchronously raises budget notifications), input validation, consistent error handling, an aggregation endpoint, automated tests (including full security, data-isolation, and end-to-end Kafka integration tests), containerization, and a CI pipeline.
+A small but production-shaped REST API for tracking personal expenses, built with **Java 21** and **Spring Boot 4**. It demonstrates a clean layered architecture, **stateless JWT authentication** (Spring Security), **per-user data ownership** and **role-based authorization**, **event-driven processing with Apache Kafka** (creating an expense asynchronously raises budget notifications), **polyglot persistence** (a **MongoDB** audit log of domain events and a **Redis** cache over the spending summary), health probes via Spring Boot Actuator, input validation, consistent error handling, an aggregation endpoint, automated tests (including full security, data-isolation, and end-to-end Kafka/Mongo/Redis integration tests), full-stack containerization with Docker Compose, and a CI pipeline that builds the image and smoke-tests the running stack.
 
 ---
 
@@ -14,11 +14,13 @@ A small but production-shaped REST API for tracking personal expenses, built wit
 | Framework | Spring Boot 4.0.x (Spring Web, Spring Data JPA, Bean Validation) |
 | Security | Spring Security 7, JWT (jjwt 0.12), BCrypt password hashing |
 | Messaging | Apache Kafka (Spring for Apache Kafka 4, KRaft) |
-| Database | PostgreSQL 17 (H2 in-memory for tests) |
+| Data stores | PostgreSQL 17 (transactional data), MongoDB 7 (audit log), Redis 7 (summary cache); H2 in-memory for tests |
+| Caching | Spring Cache backed by Redis (`RedisCacheManager`) |
+| Observability | Spring Boot Actuator — `/actuator/health` with liveness/readiness probe groups |
 | Build | Maven |
-| Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka), Awaitility |
-| Container | Docker (multi-stage build), Docker Compose |
-| CI | GitHub Actions |
+| Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka, MongoDB, Redis), Awaitility |
+| Container | Docker (multi-stage build, non-root), Docker Compose (full stack) |
+| CI | GitHub Actions (build + tests, plus a Compose smoke test) |
 
 ---
 
@@ -83,26 +85,40 @@ Two details make this correct rather than just wired up:
 
 The producer/consumer are split across an `event` package (the event and the Kafka relay) and a `notification` package (the consumer, the `Notification` entity, and its read endpoint). The notification references its owner by username — the data already on the event — keeping that module independent of the user/expense aggregates.
 
+### Polyglot persistence — audit log (MongoDB) and summary cache (Redis)
+
+Different data shapes get the store that fits them. The transactional expense and user data stay in **PostgreSQL**; two cross-cutting concerns each get a more suitable engine:
+
+- **Audit log → MongoDB.** Registrations, logins, and every expense create/update/delete publish an in-process `AuditableEvent`; a listener bound to `AFTER_COMMIT` writes an append-only document to MongoDB (so a rolled-back action leaves no misleading entry). Audit data is append-only, write-heavy, and queried by a few fields — a natural fit for a document store rather than another relational table. Each user reads their own trail at `GET /api/v1/audit`; admins see everything at `GET /api/v1/audit/all`. Writes are best-effort: a failure to record an audit entry is logged and swallowed so it can never break the user-facing operation.
+- **Summary cache → Redis.** The per-user spending summary (a `GROUP BY` aggregation) is cached in Redis keyed by username, and evicted whenever that user writes an expense. The cache lives in its own bean so Spring's caching proxy actually intercepts the call, and only the unfiltered default view is cached, which keeps the key simple and eviction precise.
+
+Both are wired in tests with real **Testcontainers** MongoDB and Redis instances (via Spring Boot's `@ServiceConnection`), so the audit trail and the cache populate/evict against the genuine engines, not mocks.
+
 ---
 
 ## Getting started
 
-### Option A — Docker (recommended, nothing to install but Docker)
+### Option A — Docker Compose (recommended, nothing to install but Docker)
 
 ```bash
 docker compose up --build
 ```
 
-This starts PostgreSQL, a single-node Kafka broker (KRaft mode, no ZooKeeper), and the API together. The API is available at `http://localhost:8080`.
+This builds the application image and starts the **entire stack** — PostgreSQL, a single-node Kafka broker (KRaft mode, no ZooKeeper), MongoDB, Redis, and the API. Each datastore has a healthcheck, and the app waits for all four to report healthy before it starts. Once up:
+
+- API: `http://localhost:8080`
+- Health: `http://localhost:8080/actuator/health` (reports `UP` once the datasource, MongoDB, and Redis are reachable; Kafka readiness is gated by the stack's healthchecks)
 
 ### Option B — Run locally
 
-Requires JDK 21, Maven, and a PostgreSQL instance. Point the app at your database via environment variables (defaults shown):
+Requires JDK 21 and Maven, plus the four backing services. The quickest path is to start just those with Compose and run the app from your IDE/Maven against them; otherwise point the app at your own instances via the environment variables below (defaults shown):
 
 ```bash
 export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/spendwise
 export SPRING_DATASOURCE_USERNAME=spendwise
 export SPRING_DATASOURCE_PASSWORD=spendwise
+export SPRING_DATA_MONGODB_URI=mongodb://localhost:27017/spendwise
+export SPRING_DATA_REDIS_HOST=localhost
 
 mvn spring-boot:run
 ```
@@ -118,6 +134,9 @@ All datasource settings are externalized (12-factor style) and read from environ
 | `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/spendwise` |
 | `SPRING_DATASOURCE_USERNAME` | `spendwise` |
 | `SPRING_DATASOURCE_PASSWORD` | `spendwise` |
+| `SPRING_DATA_MONGODB_URI` | `mongodb://localhost:27017/spendwise` |
+| `SPRING_DATA_REDIS_HOST` | `localhost` |
+| `SPRING_DATA_REDIS_PORT` | `6379` |
 | `JWT_SECRET` | dev-only default (**override in production**) |
 | `JWT_EXPIRATION_MS` | `3600000` (1 hour) |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
@@ -283,6 +302,33 @@ curl http://localhost:8080/api/v1/notifications \
 ]
 ```
 
+### Audit log
+
+Base path: `/api/v1/audit` — **requires a `Bearer` token**. Entries are recorded automatically (in MongoDB) for registrations, logins, and expense create/update/delete, newest first.
+
+| Method | Path | Description | Success |
+|--------|------|-------------|---------|
+| `GET` | `/api/v1/audit` | The caller's own audit trail | `200 OK` |
+| `GET` | `/api/v1/audit/all` | The full audit trail across all users (**admin only**) | `200 OK` |
+
+```bash
+curl http://localhost:8080/api/v1/audit \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+```json
+[
+  {
+    "id": "665f...",
+    "type": "EXPENSE_CREATED",
+    "username": "alice",
+    "detail": "Created expense 'Lunch'",
+    "entityId": 1,
+    "timestamp": "2026-06-16T10:15:30Z"
+  }
+]
+```
+
 ---
 
 ## Testing
@@ -295,8 +341,9 @@ mvn test
 - **Web layer tests** (`ExpenseControllerTest`) — `@WebMvcTest` slice with `MockMvc`, verifying status codes, validation responses, and error mapping. Security filters are disabled in this slice so it stays focused on the controller.
 - **Security & isolation integration test** (`AuthIntegrationTest`) — a full `@SpringBootTest` against an in-memory **H2** database that drives the real filter chain, JWT issuance/verification, and BCrypt. It registers, logs in, and proves the protected endpoint returns `401` without a token and `200` with a valid one (plus wrong-password and duplicate-username cases). It also proves **data isolation** — one user gets `404` trying to read or delete another user's expense — and **role enforcement** — a `USER` gets `403` on the admin endpoint while an `ADMIN` gets `200`.
 - **Event-driven integration test** (`KafkaNotificationIntegrationTest`) — a full `@SpringBootTest` that exercises the Kafka pipeline end to end against a **real broker started with Testcontainers** (`apache/kafka`, version-matched to the client). It creates an over-budget expense through the API, then polls (with Awaitility) until the asynchronously-produced notification has been consumed and persisted, and finally reads it back through `GET /api/v1/notifications`. Both integration tests share a single Spring context and one reused broker via a common `AbstractIntegrationTest` base class.
+- **Polyglot-persistence integration test** (`AuditAndCacheIntegrationTest`) — a full `@SpringBootTest` against **real MongoDB and Redis containers** (Testcontainers, wired via Spring Boot's `@ServiceConnection`). It proves the MongoDB audit log records the registration, login, and expense-creation events, and that the Redis summary cache is populated on first read and evicted on the next write.
 
-The unit and slice tests run without any database or broker. The integration tests use H2 plus a throwaway Kafka container, so the only external requirement in CI is a Docker daemon — which the GitHub Actions runners provide out of the box.
+The unit and slice tests run without any database or broker. The integration tests use H2 plus throwaway Kafka, MongoDB, and Redis containers, so the only external requirement in CI is a Docker daemon — which the GitHub Actions runners provide out of the box. A separate CI job builds the Docker image and brings up the full Docker Compose stack, waiting on the app's `/actuator/health` endpoint to confirm it connected to every backing service before passing.
 
 ---
 
@@ -333,6 +380,9 @@ This is the foundation of a larger portfolio. Natural next steps:
 - ~~JWT authentication~~ ✅ done — see the Authentication section above
 - ~~Per-user data ownership and role-based authorization (`USER` / `ADMIN`)~~ ✅ done — see the Admin section and design decisions
 - ~~Event-driven processing with Apache Kafka~~ ✅ done — see the Event-driven processing section and the Notifications endpoint
+- ~~Polyglot persistence — MongoDB audit log and Redis summary cache~~ ✅ done — see the Polyglot persistence section and the Audit endpoints
+- ~~Full-stack Docker Compose (app + PostgreSQL + Kafka + MongoDB + Redis), health-gated startup, and a CI smoke test of the running stack~~ ✅ done — see Getting started
+- Kubernetes deployment (the liveness/readiness probes are already in place)
+- Deployment to a cloud provider with a CI/CD pipeline
 - Interactive API docs with OpenAPI / Swagger UI
 - Versioned schema migrations (Flyway)
-- Containerized deployment to a cloud provider
