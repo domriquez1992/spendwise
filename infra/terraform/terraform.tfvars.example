@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars (it is gitignored).
+# Sensitive values can also be supplied via environment variables, e.g. TF_VAR_db_password.
+
+aws_region = "eu-north-1"
+
+# Required, sensitive:
+db_password = "change-me-strong-password"
+jwt_secret  = "change-me-at-least-32-bytes-long-signing-secret-0123456789"
+
+# Managed datastores (point these at MongoDB Atlas / ElastiCache / MSK or Confluent Cloud):
+# mongodb_uri             = "mongodb+srv://user:pass@cluster.example.mongodb.net/spendwise"
+# redis_host              = "spendwise.abc123.ng.0001.eun1.cache.amazonaws.com"
+# kafka_bootstrap_servers = "b-1.spendwise.abc123.c2.kafka.eu-north-1.amazonaws.com:9092"
+
+# Application image (defaults to the GHCR image published by CI):
+# app_image = "ghcr.io/domriquez1992/spendwise:latest"
