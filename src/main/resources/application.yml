@@ -36,14 +36,19 @@ spring:
         spring.json.trusted.packages: com.domriquez.spendwise.event
   data:
     mongodb:
-      # Audit-log document store. In production point at your cluster via SPRING_DATA_MONGODB_URI;
-      # the integration test overrides this with a Testcontainers MongoDB instance.
-      uri: ${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/spendwise}
+      # Audit-log document store. Plain literal default on purpose (NOT a ${ENV:...} placeholder):
+      # Spring Boot 4 does not reliably bind a placeholder-valued spring.data.mongodb.uri when a
+      # profile supplies an override, and silently falls back to localhost (see the Compose docker
+      # profile, which sets the concrete service URI). The integration test overrides this entirely
+      # via Testcontainers @ServiceConnection, so the literal here only affects plain local runs.
+      uri: mongodb://localhost:27017/spendwise
       auto-index-creation: true
     redis:
-      # Cache backing store. Overridden by the Testcontainers Redis instance in integration tests.
-      host: ${SPRING_DATA_REDIS_HOST:localhost}
-      port: ${SPRING_DATA_REDIS_PORT:6379}
+      # Cache backing store. Plain literal defaults for the same Boot 4 binding reason as mongodb
+      # above: the "docker" profile overrides host/port with concrete Compose values, and the
+      # integration test overrides them via Testcontainers @ServiceConnection.
+      host: localhost
+      port: 6379
   cache:
     type: redis
     redis:
