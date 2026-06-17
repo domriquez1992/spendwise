@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+
+# Runtime-only image used by CI to publish a multi-architecture image to the registry.
+#
+# A Spring Boot jar is platform-independent Java bytecode, so CI compiles it once (natively, with
+# Maven) and this image simply layers that same jar onto the JRE base for each target architecture.
+# That is dramatically faster than recompiling the application under arm64 emulation, while still
+# producing genuine linux/amd64 and linux/arm64 images (the eclipse-temurin base is multi-arch).
+#
+# The self-contained multi-stage build used for local/Compose/Kubernetes builds lives in ./Dockerfile.
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+
+# Run as an unprivileged user rather than root.
+RUN groupadd --system spring && useradd --system --no-create-home --gid spring spring
+
+COPY target/*.jar app.jar
+USER spring:spring
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
