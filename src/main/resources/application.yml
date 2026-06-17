@@ -96,6 +96,12 @@ management:
     tags:
       # Tag every meter with the application name so a multi-service Prometheus can distinguish them.
       application: ${spring.application.name}
+  # The OpenTelemetry starter bundles an OTLP metrics registry that would push to localhost:4318;
+  # disable it so metrics flow only via the Prometheus scrape endpoint.
+  otlp:
+    metrics:
+      export:
+        enabled: false
   # Distributed tracing. Sample every request (appropriate for a low-traffic demo; lower in
   # production) so each request carries a trace/span id that Micrometer Tracing puts into the
   # logging MDC. Spans are exported only when an OTLP endpoint is configured (the observability

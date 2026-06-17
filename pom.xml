@@ -50,28 +50,16 @@
             <scope>runtime</scope>
         </dependency>
         <!--
-            Tracing: Micrometer Tracing over OpenTelemetry, reporting via OTLP. We depend on the
-            granular modules instead of spring-boot-starter-opentelemetry on purpose. The starter
-            also pulls in micrometer-registry-otlp (a SECOND MeterRegistry), which makes Spring
-            Boot build a composite registry; in that setup our programmatically-registered custom
-            meters did not reach the Prometheus scrape endpoint. These three modules give OTLP trace
-            export and nothing else (Boot's tracing auto-config, the Micrometer/OpenTelemetry
-            bridge, and the OTLP span exporter), leaving exactly one MeterRegistry: Prometheus.
+            Tracing: Spring Boot 4's OpenTelemetry starter (OTLP). Bridges the Micrometer
+            Observation API to OpenTelemetry and generates trace/span ids into the logging MDC.
             Traces export only when management.opentelemetry.tracing.export.otlp.endpoint is set (the
-            observability overlay points it at Tempo); unset by default and in CI. All versions are
-            managed by the Spring Boot BOM.
+            observability overlay points it at Tempo); unset by default and in CI. The starter also
+            bundles an OTLP metrics registry, which we disable in application.yml so metrics flow
+            only via the Prometheus scrape. All versions are managed by the Spring Boot BOM.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-tracing-bridge-otel</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
         </dependency>
 
         <dependency>
