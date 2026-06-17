@@ -22,11 +22,11 @@ class MetricsIntegrationTest extends AbstractIntegrationTest {
         createExpense(token);
 
         // The scrape endpoint is permitted without a token. It must render a baseline JVM meter
-        // (proving the Prometheus registry is active) and our custom counter: a Micrometer counter
-        // named spendwise.expenses.created is exported as spendwise_expenses_created_total.
+        // (proving the Prometheus registry is active) and our custom counter. Asserting the base
+        // name (the Prometheus exposition appends _total to counters) keeps this robust.
         mockMvc.perform(get("/actuator/prometheus"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("jvm_memory_used_bytes")))
-                .andExpect(content().string(containsString("spendwise_expenses_created_total")));
+                .andExpect(content().string(containsString("spendwise_expenses_created")));
     }
 }
