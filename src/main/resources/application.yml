@@ -34,22 +34,23 @@ spring:
         # Deserialize event payloads to this type, and only trust this package.
         spring.json.value.default.type: com.domriquez.spendwise.event.ExpenseCreatedEvent
         spring.json.trusted.packages: com.domriquez.spendwise.event
+  mongodb:
+    # MongoDB CONNECTION settings. In Spring Boot 4 the Mongo driver auto-configuration was split
+    # out of Spring Data into its own module, and the connection properties moved from
+    # `spring.data.mongodb.*` to `spring.mongodb.*` (MongoProperties is now
+    # @ConfigurationProperties("spring.mongodb")). Keys left under spring.data.mongodb.* are silently
+    # ignored for connectivity, which is why a uri/host set there fell back to localhost:27017.
+    # Overridden by the "docker" profile (mongo:27017) for the Compose stack; the integration test
+    # overrides it entirely via Testcontainers @ServiceConnection.
+    uri: mongodb://localhost:27017/spendwise
   data:
     mongodb:
-      # Audit-log document store. Configured with the individual host/port/database properties
-      # rather than a single `uri`: Spring Boot's MongoProperties ignores `spring.data.mongodb.uri`
-      # when any other `spring.data.mongodb.*` property (here, auto-index-creation) is set in the
-      # same config, silently falling back to localhost:27017. The host/port form binds cleanly and
-      # is overridden by the "docker" profile (mongo:27017) for the Compose stack. The integration
-      # test overrides this entirely via Testcontainers @ServiceConnection.
-      host: localhost
-      port: 27017
-      database: spendwise
+      # Spring DATA Mongo behaviour (not connectivity) stays under spring.data.mongodb.*.
       auto-index-creation: true
     redis:
-      # Cache backing store. Plain literal defaults for the same Boot 4 binding reason as mongodb
-      # above: the "docker" profile overrides host/port with concrete Compose values, and the
-      # integration test overrides them via Testcontainers @ServiceConnection.
+      # Cache backing store. Redis connection config remains under spring.data.redis in Boot 4
+      # (Redis was not split into a separate driver module). The "docker" profile overrides host/port
+      # with concrete Compose values; the integration test overrides them via @ServiceConnection.
       host: localhost
       port: 6379
   cache:

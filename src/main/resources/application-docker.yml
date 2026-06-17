@@ -11,11 +11,10 @@ spring:
     password: spendwise
   kafka:
     bootstrap-servers: kafka:9092
+  mongodb:
+    # Boot 4 Mongo connection namespace (see application.yml for the rationale).
+    uri: mongodb://mongo:27017/spendwise
   data:
-    mongodb:
-      host: mongo
-      port: 27017
-      database: spendwise
     redis:
       host: redis
       port: 6379
