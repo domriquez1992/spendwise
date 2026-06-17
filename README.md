@@ -20,7 +20,8 @@ A small but production-shaped REST API for tracking personal expenses, built wit
 | Build | Maven |
 | Testing | JUnit 5, Mockito, Spring MockMvc, AssertJ, Testcontainers (Kafka, MongoDB, Redis), Awaitility |
 | Container | Docker (multi-stage build, non-root), Docker Compose (full stack) |
-| CI | GitHub Actions (build + tests, plus a Compose smoke test) |
+| Orchestration | Kubernetes (Kustomize base + overlay, StatefulSets, ConfigMap/Secret, health-probe wiring) |
+| CI | GitHub Actions — build + tests, a Compose smoke test, and Kubernetes manifest validation + a kind deploy |
 
 ---
 
@@ -117,11 +118,30 @@ Requires JDK 21 and Maven, plus the four backing services. The quickest path is 
 export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/spendwise
 export SPRING_DATASOURCE_USERNAME=spendwise
 export SPRING_DATASOURCE_PASSWORD=spendwise
-export SPRING_DATA_MONGODB_URI=mongodb://localhost:27017/spendwise
+export SPRING_MONGODB_URI=mongodb://localhost:27017/spendwise
 export SPRING_DATA_REDIS_HOST=localhost
 
 mvn spring-boot:run
 ```
+
+### Option C — Kubernetes (kind, or any cluster)
+
+The full stack is also packaged as Kubernetes manifests under [`k8s/`](k8s/), organized as a Kustomize base with a `dev` overlay. With a running cluster (e.g. [kind](https://kind.sigs.k8s.io/)) and the app image available to it:
+
+```bash
+# Build the image and make it available to a local kind cluster
+docker build -t spendwise:dev .
+kind load docker-image spendwise:dev
+
+# Deploy everything into the "spendwise" namespace
+kubectl apply -k k8s/overlays/dev
+
+# Watch it come up, then reach the API
+kubectl -n spendwise rollout status deployment/spendwise
+kubectl -n spendwise port-forward svc/spendwise 8080:8080
+```
+
+PostgreSQL, MongoDB, and Kafka run as **StatefulSets** with their own persistent volumes; Redis runs as a stateless **Deployment**. The application is a 2-replica **Deployment** whose **liveness/readiness/startup probes** are wired to the Spring Boot actuator health groups — the readiness probe reports ready only once PostgreSQL, MongoDB, and Redis are reachable, so a pod takes traffic only when it can actually serve it. Configuration comes from a `ConfigMap`, credentials from a `Secret`, and an init container holds app startup until every dependency is accepting connections.
 
 ---
 
@@ -373,6 +393,10 @@ A few choices worth calling out:
 - **Spring Boot 4 split each integration into its own auto-configuration module.** Boot 4 broke the monolithic `spring-boot-autoconfigure` into per-technology modules, which has two consequences this project handles explicitly. First, each integration needs its own starter on the classpath (e.g. `spring-boot-starter-cache` alongside `spring-boot-starter-data-redis` for `@Cacheable` to auto-configure). Second — and far subtler — **the MongoDB driver auto-configuration moved out of Spring Data into a new module, and with it the connection properties moved from `spring.data.mongodb.*` to `spring.mongodb.*`** (`MongoProperties` is now `@ConfigurationProperties("spring.mongodb")`). A connection URI left under the old `spring.data.mongodb.uri` is silently ignored and Mongo falls back to `localhost`. Connectivity therefore lives under `spring.mongodb`, while genuinely Spring-Data settings like `auto-index-creation` stay under `spring.data.mongodb`. (Redis was *not* split, so its connection config remains under `spring.data.redis`.)
 - **The Compose stack is wired with a `docker` Spring profile, not per-property env vars.** `docker-compose.yml` sets `SPRING_PROFILES_ACTIVE=docker`, and `application-docker.yml` carries the concrete service-name connections (`db`, `kafka`, `mongo`, `redis`). A profile of plain values is more robust and far easier to read than a long list of relaxed-binding environment overrides, and it keeps the Compose file itself minimal.
 - **CI proves the whole stack boots, not just the unit tests.** Beyond the `build` job (`mvn verify` with Testcontainers), a separate `docker` job builds the image, brings up the full Compose stack, and polls `/actuator/health` until it reports `UP` — which only happens once the app has genuinely connected to PostgreSQL, MongoDB, and Redis. A green pipeline therefore certifies that the assembled system runs, catching exactly the class of wiring bug (like the Mongo namespace move above) that unit tests with `@ServiceConnection` can't see.
+- **Kubernetes readiness reflects dependencies, liveness reflects the process.** On Kubernetes the probes map onto Spring Boot's actuator health *groups*: liveness tracks `livenessState` (restart only a genuinely broken process), while the readiness group is configured to include the `db`, `mongo`, and `redis` health indicators — so a pod is pulled from the Service the moment a datastore it needs becomes unreachable, and only takes traffic once it can actually serve it. A startup probe guards the slow Spring Boot boot so liveness can't kill the pod mid-startup. Kafka is intentionally left out of readiness: publishing is asynchronous and degrades gracefully.
+- **Stateful vs stateless, modelled honestly.** PostgreSQL, MongoDB, and Kafka are `StatefulSet`s with their own `PersistentVolumeClaim`s; Redis — a disposable cache — is a plain `Deployment` with no volume. The application is a multi-replica `Deployment` because identity lives in the JWT, not in server-side session state. An init container blocks app startup until every dependency accepts connections, giving a deterministic bring-up order rather than relying on crash-loop-and-retry.
+- **Config and secrets are externalized, and the manifests are layered.** Non-secret settings come from a `ConfigMap` (including which Spring profile to run) and credentials from a `Secret`, both consumed via `envFrom` — no configuration baked into the image. The manifests use Kustomize (a `base` plus a `dev` overlay) so environment-specific concerns like the image tag stay out of the base. The same connection topology is expressed once as a `k8s` Spring profile, mirroring the Compose service names.
+- **Manifests are validated *and* deployed in CI.** A fast `k8s-validate` job renders the overlay and checks every manifest against the Kubernetes schemas with `kubeconform`; only if that passes does `k8s-deploy` spin up an ephemeral kind cluster, load the freshly built image, apply the overlay, wait for every rollout, and smoke-test the health endpoint. The schema gate fails in seconds on a typo; the deploy gate proves the system genuinely runs on Kubernetes.
 
 ---
 
@@ -385,7 +409,7 @@ This is the foundation of a larger portfolio. Natural next steps:
 - ~~Event-driven processing with Apache Kafka~~ ✅ done — see the Event-driven processing section and the Notifications endpoint
 - ~~Polyglot persistence — MongoDB audit log and Redis summary cache~~ ✅ done — see the Polyglot persistence section and the Audit endpoints
 - ~~Full-stack Docker Compose (app + PostgreSQL + Kafka + MongoDB + Redis), health-gated startup, and a CI smoke test of the running stack~~ ✅ done — see Getting started
-- Kubernetes deployment (the liveness/readiness probes are already in place)
+- ~~Kubernetes deployment with health-probe-driven orchestration, validated and deployed in CI on an ephemeral kind cluster~~ ✅ done — see Getting started (Option C) and the `k8s/` manifests
 - Deployment to a cloud provider with a CI/CD pipeline
 - Interactive API docs with OpenAPI / Swagger UI
 - Versioned schema migrations (Flyway)
