@@ -1,0 +1,36 @@
+# Configuration profile for running on Kubernetes.
+#
+# Activated by SPRING_PROFILES_ACTIVE=k8s, set via the spendwise-config ConfigMap. The connection
+# topology mirrors the Compose stack: every dependency is reachable by its in-cluster Service name
+# (db, kafka, mongo, redis), so these concrete values override the localhost defaults in
+# application.yml. Using a profile of plain values (rather than a per-property environment override
+# for every setting) keeps the wiring explicit and robust.
+#
+# Credentials are NOT stored here. The datasource password and the JWT secret are injected from the
+# spendwise-secret Secret as the SPRING_DATASOURCE_PASSWORD and JWT_SECRET environment variables,
+# which the base application.yml already reads via ${...} placeholders.
+spring:
+  datasource:
+    url: jdbc:postgresql://db:5432/spendwise
+    username: spendwise
+  kafka:
+    bootstrap-servers: kafka:9092
+  mongodb:
+    # Boot 4 Mongo connection namespace (see application.yml for the full rationale): connectivity
+    # lives under spring.mongodb.*, while Spring Data behaviour stays under spring.data.mongodb.*.
+    uri: mongodb://mongo:27017/spendwise
+  data:
+    redis:
+      host: redis
+      port: 6379
+
+management:
+  endpoint:
+    health:
+      group:
+        # Make the Kubernetes readiness probe meaningful: a pod only joins the Service once the
+        # datastores it needs to serve traffic (PostgreSQL, MongoDB, Redis) are actually reachable.
+        # Kafka is deliberately excluded -- event publishing is asynchronous and degrades
+        # gracefully, so a transient broker problem shouldn't pull the whole API out of rotation.
+        readiness:
+          include: readinessState,db,mongo,redis

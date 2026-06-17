@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Everything lands in a dedicated namespace.
+namespace: spendwise
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - mongo.yaml
+  - kafka.yaml
+  - redis.yaml
+  - app.yaml
+
+# Non-secret application configuration. The generated ConfigMap carries a content hash in its name,
+# so any change rolls the Deployment automatically.
+configMapGenerator:
+  - name: spendwise-config
+    literals:
+      - SPRING_PROFILES_ACTIVE=k8s
+      - APP_BUDGET_MONTHLY_CATEGORY_LIMIT=1000
+
+# Credentials. Demo values for a throwaway cluster -- a real deployment would source these from a
+# sealed secret, an external secrets operator, or a cloud secret manager rather than committing
+# them. The datasource password is shared with the postgres pod (same key, two consumers).
+secretGenerator:
+  - name: spendwise-secret
+    literals:
+      - SPRING_DATASOURCE_PASSWORD=spendwise
+      - POSTGRES_PASSWORD=spendwise
+      - JWT_SECRET=k8s-demo-secret-please-override-0123456789-abcdefghij-klmnop
+
+# A common label across every object, without rewriting selectors.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: spendwise
+    includeSelectors: false
