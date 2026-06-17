@@ -22,3 +22,42 @@ jobs:
 
       - name: Build and run tests
         run: mvn -B verify
+
+  docker:
+    # Proves the whole system runs together: build the image, bring up the full Compose stack
+    # (PostgreSQL, Kafka, MongoDB, Redis, and the app), and wait for the app to report healthy.
+    # /actuator/health reports UP once the app has connected to PostgreSQL, MongoDB, and Redis;
+    # Kafka readiness is gated by the app's depends_on. A healthy response therefore confirms the
+    # whole stack came up and the app wired to its datastores.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate the Compose file
+        run: docker compose config -q
+
+      - name: Build images and start the stack
+        run: docker compose up -d --build
+
+      - name: Wait for the application to become healthy
+        run: |
+          echo "Waiting for http://localhost:8080/actuator/health to report UP..."
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
+              echo "Application is UP after ${i} attempt(s)."
+              exit 0
+            fi
+            echo "Attempt ${i}/40: not ready yet, waiting 5s..."
+            sleep 5
+          done
+          echo "::error::Application did not become healthy in time."
+          echo "----- docker compose ps -----"
+          docker compose ps
+          echo "----- docker compose logs -----"
+          docker compose logs --no-color
+          exit 1
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v
